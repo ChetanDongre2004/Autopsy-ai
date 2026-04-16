@@ -36,3 +36,4 @@ out.txt
 # Cloned repos (runtime artifacts)
 cloned_repos/
 temp_repos/
+backend/temp/

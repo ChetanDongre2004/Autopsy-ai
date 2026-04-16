@@ -1,4 +1,4 @@
-const API_BASE = window.location.origin;
+const API_BASE = "http://localhost:8000";
 
 const ALL_TABS = ["review", "test", "audit", "repo", "qa", "dast", "analyze", "deps", "branch", "dashboard"];
 const GRID_TABS = ["review", "test", "audit"];
