@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export default function App() {
   const [form, setForm] = useState({
-    url: "https://github.com/owner/repository",
+    url: "",
     branch: "main",
     rawCode: "",
     targetApi: ""
