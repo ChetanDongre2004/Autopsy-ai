@@ -2,6 +2,9 @@ import React, { useState } from "react";
 import { Routes, Route, useNavigate, Navigate, useLocation } from "react-router-dom";
 import RepoDashboard from "./components/RepoDashboard";
 import CodeSecurityDashboard from "./components/CodeSecurityDashboard";
+import AiCodeReviewDashboard from "./components/AiCodeReviewDashboard";
+import QaAutomationDashboard from "./components/QaAutomationDashboard";
+import PentestDashboard from "./components/PentestDashboard";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import LandingPage from "./pages/LandingPage";
@@ -47,6 +50,8 @@ export default function App() {
         return { title: "AI Code Review Platform", desc: "Review source code like a senior engineer. Gain deep insights into algorithmic complexity and specific refactoring opportunities.", icon: <Code2 className="w-5 h-5 text-indigo-400" /> };
       case "/products/qa":
         return { title: "QA Automation Platform", desc: "Detect missing tests and heavily boost your coverage by auto-generating robust edge case simulations.", icon: <Zap className="w-5 h-5 text-amber-400" /> };
+      case "/products/pentest":
+        return { title: "Enterprise Pentesting Platform", desc: "Run aggressive DAST scanning, unearth hidden API vulnerabilities, map attack paths, and remediate exploits.", icon: <Target className="w-5 h-5 text-red-500" /> };
       default:
         return { title: "Enterprise Platform", desc: "Analyze any codebase instantly.", icon: <Terminal className="w-5 h-5" /> };
     }
@@ -56,6 +61,13 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
+      if (inputMode === "github") {
+         const urlStr = form.url.trim().replace(/['"]/g, '');
+         if (urlStr && (!urlStr.includes("github.com") || urlStr.includes("\n") || urlStr.includes(" "))) {
+             throw new Error("Invalid GitHub URL. Must contain github.com and not have spaces.");
+         }
+      }
+
       let res;
       if (inputMode === "file" || inputMode === "zip" || inputMode === "raw") {
          const formData = new FormData();
@@ -83,18 +95,35 @@ export default function App() {
 
       if (!res.ok) {
          const d = await res.json().catch(()=>({}));
-         throw new Error(d.detail || "Analysis failed. Please check the backend.");
+         let errMessage = d.detail;
+         if (Array.isArray(d.detail) && d.detail.length > 0) {
+             errMessage = d.detail[0].msg.includes("Value error,") ? d.detail[0].msg.split("Value error,")[1].trim() : d.detail[0].msg;
+         }
+         throw new Error(errMessage || "Analysis failed. Please check the backend.");
       }
       
       const { job_id } = await res.json();
       
       // Live Polling Loop
+      let retries = 0;
       while (true) {
          await new Promise(r => setTimeout(r, 1000));
-         const statRes = await fetch(`${BASE_URL}/api/v1/scan/status/${job_id}`);
+         let statRes;
+         try {
+             statRes = await fetch(`${BASE_URL}/api/v1/scan/status/${job_id}`);
+         } catch (e) {
+             // Handle ERR_CONNECTION_RESET or transient network drops by retrying
+             retries++;
+             if (retries > 5) throw new Error("Connection to backend lost completely. Please check your network or restart the server.");
+             continue; // Skip this iteration and try polling again
+         }
+         
+         // Reset retries on successful connection
+         retries = 0;
+
          if (!statRes.ok) {
              if (statRes.status === 404) throw new Error("Job expired or not found in system. Please rescan.");
-             throw new Error("Job polling blocked.");
+             throw new Error("Job polling blocked by server.");
          }
          
          const stat = await statRes.json();
@@ -104,7 +133,20 @@ export default function App() {
          if (stat.status === "success") break;
       }
       
-      const finalRes = await fetch(`${BASE_URL}/api/v1/scan/result/${job_id}`);
+      // Robust fetch for the final result
+      let finalRes;
+      let resultRetries = 0;
+      while (resultRetries < 3) {
+          try {
+              finalRes = await fetch(`${BASE_URL}/api/v1/scan/result/${job_id}`);
+              break;
+          } catch (e) {
+              resultRetries++;
+              if (resultRetries === 3) throw new Error("Failed to retrieve final results after multiple attempts.");
+              await new Promise(r => setTimeout(r, 1000));
+          }
+      }
+      
       if (!finalRes.ok) throw new Error("Failed to compile final results.");
       setData(await finalRes.json());
       
@@ -172,7 +214,7 @@ export default function App() {
               </p>
 
               {/* MULTI-MODE INPUT SYSTEM conditionally rendered based on path */}
-              {location.pathname === "/products/security" ? (
+              {location.pathname === "/products/security" || location.pathname === "/products/review" ? (
                 <div className="max-w-4xl mx-auto mt-12 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-xl text-left">
                    <div className="flex overflow-x-auto gap-2 mb-6 pb-2 border-b border-zinc-800/80 custom-scrollbar">
                      {[{id: "github", label: "GitHub Repo"}, {id: "raw", label: "Raw Code"}, {id: "file", label: "File Upload"}, {id: "zip", label: "ZIP Archive"}, {id: "api", label: "API Target"}].map(mode => (
@@ -230,7 +272,7 @@ export default function App() {
                    )}
 
                    {inputMode === "api" && (
-                     <input className="w-full py-4 px-5 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:border-indigo-500 text-white font-medium" placeholder="https://api.example.com/v1" />
+                     <input className="w-full py-4 px-5 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:border-indigo-500 text-white font-medium" placeholder="https://api.example.com/v1" value={form.targetApi} onChange={(e) => setForm({...form, targetApi: e.target.value})} />
                    )}
 
                    <div className="mt-6 flex justify-end">
@@ -298,10 +340,10 @@ export default function App() {
                <Routes>
                   <Route path="/products/github" element={<RepoDashboard data={data} />} />
                   <Route path="/products/security" element={<CodeSecurityDashboard data={data} />} />
-                  <Route path="/products/review" element={mockTabContent("AI Code Review Central", Code2, "Deploy senior AI architect models automatically against every PR. Support for 40+ languages.")} />
+                  <Route path="/products/review" element={<AiCodeReviewDashboard data={data} />} />
+                  <Route path="/products/qa" element={<QaAutomationDashboard data={data} />} />
                   <Route path="/products/quality" element={mockTabContent("Code Quality Intelligence", HeartPulse, "Monitor technical debt, duplicate code segments, and measure exact team maintainability scores.")} />
-                  <Route path="/products/qa" element={mockTabContent("QA Test Automation", Zap, "Auto-generate full suite unit tests using AI. Increase code coverage by 80% without manual effort.")} />
-                  <Route path="/products/pentest" element={mockTabContent("Simulated Pentesting", Target, "Run completely safe DDoS simulations, OWASP Top 10 abuse tests, and aggressive fuzzing on your deployment endpoints.")} />
+                  <Route path="/products/pentest" element={<PentestDashboard data={data} />} />
                   <Route path="/products/developer360" element={mockTabContent("Developer 360", UserCircle, "Evaluate engineering productivity, pinpoint architecture knowledge silos, and reward top maintainers.")} />
                   <Route path="/products/reports" element={mockTabContent("Enterprise Reports Center", FileText, "Export raw audit CSVs or gorgeous Executive Summary PDFs detailing your absolute threat vectors.")} />
                   <Route path="*" element={<Navigate to="/products/github" replace />} />

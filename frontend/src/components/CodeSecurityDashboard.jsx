@@ -207,7 +207,7 @@ export default function CodeSecurityDashboard({ data }) {
         <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl flex flex-col items-center">
            <h3 className="w-full text-lg font-bold text-zinc-100 mb-4">Risk Distribution</h3>
            <div className="w-full h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                   <PieChart>
                     <Pie data={severityData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
                       {severityData.map((entry, index) => (

@@ -18,7 +18,7 @@ export default function ScoreGauge({ score, label }) {
   return (
     <div className="relative flex flex-col items-center justify-center h-32 w-32 shrink-0">
       <div className="w-full h-full absolute inset-0">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <PieChart>
             <Pie
               data={data}

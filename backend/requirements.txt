@@ -6,3 +6,5 @@ pydantic==2.7.1
 python-multipart==0.0.9
 GitPython==3.1.43
 reportlab==4.2.0
+sqlalchemy
+chromadb
