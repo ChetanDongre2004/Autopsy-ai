@@ -39,3 +39,11 @@ temp_repos/
 backend/temp/
 backend/.autopsy_cache/
 backend/autopsy_jobs.db
+
+# Local development test artifacts
+backend/test_venv/
+*.orig
+backend/scratch_test.py
+backend/test_kb.py
+backend/test_kb2.py
+backend/test_scan.py

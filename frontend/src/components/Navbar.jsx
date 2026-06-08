@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Rocket, ChevronDown, ShieldAlert, Code2, HeartPulse, Target, UserCircle, FileText, Blocks, Zap, Menu, X } from "lucide-react";
+import { Rocket, ChevronDown, ShieldAlert, Code2, HeartPulse, Target, UserCircle, FileText, Blocks, Zap, Menu, X, Cpu } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Navbar() {
@@ -16,6 +16,7 @@ export default function Navbar() {
     { name: "Pentesting Platform", path: "/products/pentest", icon: <Target className="w-5 h-5 text-orange-400"/>, desc: "API hitting, fuzzing, and auth abuse." },
     { name: "Developer 360", path: "/products/developer360", icon: <UserCircle className="w-5 h-5 text-cyan-400"/>, desc: "Ownership, hotspots, and team analytics." },
     { name: "Reports Center", path: "/products/reports", icon: <FileText className="w-5 h-5 text-zinc-400"/>, desc: "Export PDFs, JSON trends, and compliance." },
+    { name: "AMD AI Acceleration Hub", path: "/products/amd-ai-hub", icon: <Cpu className="w-5 h-5 text-orange-400"/>, desc: "Local RAG Code Chat & Telemetry benchmarks." },
   ];
 
   return (

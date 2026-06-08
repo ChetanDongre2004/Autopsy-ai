@@ -2,18 +2,13 @@ import os
 import time
 import json
 import uuid
+import logging
 from typing import List, Dict, Any, Optional
-from sqlalchemy import create_engine, Column, String, Float, Integer, Text, ForeignKey, JSON
+from sqlalchemy import create_engine, Column, String, Float, Integer, Text, ForeignKey, JSON, Boolean, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+# pyrefly: ignore [missing-import]
+from pgvector.sqlalchemy import Vector
 import tempfile
-import hashlib
-
-# Vector Engine (Try importing Chroma, fallback if not available)
-try:
-    import chromadb
-    CHROMA_AVAILABLE = True
-except ImportError:
-    CHROMA_AVAILABLE = False
 
 Base = declarative_base()
 
@@ -24,6 +19,7 @@ class Repository(Base):
     owner = Column(String)
     name = Column(String)
     default_branch = Column(String)
+    fingerprint = Column(String)
 
 class RepoScan(Base):
     __tablename__ = 'repo_scans'
@@ -35,6 +31,25 @@ class RepoScan(Base):
     created_at = Column(Float)
     kpis = Column(JSON)
     tech_stack = Column(JSON)
+
+class RepoChunk(Base):
+    __tablename__ = 'repo_chunks'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    file_path = Column(String)
+    content = Column(Text)
+    chunk_type = Column(String)
+    symbol_name = Column(String)
+    language = Column(String)
+    tags = Column(JSON)
+
+class RepoEmbedding(Base):
+    __tablename__ = 'repo_embeddings'
+    id = Column(String, primary_key=True)
+    chunk_id = Column(String, ForeignKey('repo_chunks.id'))
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    embedding_profile = Column(String)  # source_code, docs, security
+    embedding = Column(Vector(768))
 
 class RepoFinding(Base):
     __tablename__ = 'repo_findings'
@@ -50,56 +65,249 @@ class RepoFinding(Base):
     code_snippet = Column(Text)
     effort = Column(String)
 
-class KBChunk(Base):
-    __tablename__ = 'kb_chunks'
+class RepoGraphNode(Base):
+    __tablename__ = 'repo_graph_nodes'
     id = Column(String, primary_key=True)
     repo_id = Column(String, ForeignKey('repositories.id'))
-    file_path = Column(String)
-    content = Column(Text)
-    chunk_type = Column(String)
+    label = Column(String)
+    properties = Column(JSON)
 
-class RepoTrend(Base):
-    __tablename__ = 'repo_trends'
+class RepoGraphEdge(Base):
+    __tablename__ = 'repo_graph_edges'
     id = Column(String, primary_key=True)
     repo_id = Column(String, ForeignKey('repositories.id'))
+    source_id = Column(String, ForeignKey('repo_graph_nodes.id'))
+    target_id = Column(String, ForeignKey('repo_graph_nodes.id'))
+    relationship = Column(String)
+
+class HistoricalFinding(Base):
+    __tablename__ = 'historical_findings'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    finding_id = Column(String)
+    status = Column(String)  # open, resolved, reopened
+    updated_at = Column(Float)
+
+class RetrievalLog(Base):
+    __tablename__ = 'retrieval_logs'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    task_type = Column(String)
+    query = Column(String)
+    retrieved_chunk_ids = Column(JSON)
+    timestamp = Column(Float)
+
+class QAFlakyMemory(Base):
+    __tablename__ = 'qa_flaky_memory'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    test_name = Column(String)
+    suite = Column(String)
+    flake_rate = Column(Float)
+    root_cause = Column(Text)
+    history = Column(JSON)
+
+class QAHistoricalFailures(Base):
+    __tablename__ = 'qa_historical_failures'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    test_name = Column(String)
+    error_msg = Column(Text)
+    ai_hypothesis = Column(Text)
+    suggested_fix = Column(Text)
+    timestamp = Column(Float)
+
+class QAReleaseScores(Base):
+    __tablename__ = 'qa_release_scores'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    scan_id = Column(String, ForeignKey('repo_scans.id'))
     score = Column(Integer)
+    decision = Column(String)
+    block_reasons = Column(JSON)
+    timestamp = Column(Float)
+
+class QAGeneratedTests(Base):
+    __tablename__ = 'qa_generated_tests'
+    id = Column(String, primary_key=True)
+    repo_id = Column(String, ForeignKey('repositories.id'))
+    test_name = Column(String)
+    suite = Column(String)
+    code_snippet = Column(Text)
+
+# =====================================================================
+# GitHub HITL Governance Models
+# =====================================================================
+
+class GithubFinding(Base):
+    __tablename__ = 'github_findings'
+    id = Column(String, primary_key=True)
+    repository_id = Column(String, index=True)
+    branch = Column(String)
+    module = Column(String, default="github_intelligence")
+    finding_type = Column(String)
+    title = Column(String)
+    severity = Column(String)
+    confidence_score = Column(Float)
+    business_impact = Column(String)
+    architecture_impact = Column(String)
+    affected_files = Column(String)
+    affected_modules = Column(String)
+    evidence = Column(String)
+    ai_reasoning = Column(String)
+    remediation = Column(String)
+    status = Column(String, default="PENDING_REVIEW")
+    reviewer = Column(String)
+    assigned_team = Column(String)
     created_at = Column(Float)
 
+class GithubReviewDecision(Base):
+    __tablename__ = 'github_review_decisions'
+    id = Column(String, primary_key=True)
+    finding_id = Column(String, index=True)
+    decision = Column(String)
+    reviewer = Column(String)
+    notes = Column(String)
+    timestamp = Column(Float)
+
+class GithubReviewerNote(Base):
+    __tablename__ = 'github_reviewer_notes'
+    id = Column(String, primary_key=True)
+    finding_id = Column(String, index=True)
+    reviewer = Column(String)
+    note = Column(String)
+    timestamp = Column(Float)
+
+class GithubTask(Base):
+    __tablename__ = 'github_tasks'
+    id = Column(String, primary_key=True)
+    finding_id = Column(String, index=True)
+    assigned_team = Column(String)
+    eta = Column(Float)
+    status = Column(String, default="OPEN")
+    retest_status = Column(String)
+    created_at = Column(Float)
+
+class GithubFalsePositive(Base):
+    __tablename__ = 'github_false_positive_memory'
+    id = Column(String, primary_key=True)
+    repository_id = Column(String, index=True)
+    finding_type = Column(String)
+    rejection_reason = Column(String)
+    architecture_preference = Column(String)
+    created_at = Column(Float)
+
+class GithubSLATracking(Base):
+    __tablename__ = 'github_sla_tracking'
+    id = Column(String, primary_key=True)
+    finding_id = Column(String, index=True)
+    severity = Column(String)
+    deadline = Column(Float)
+    breached = Column(Boolean, default=False)
+    escalated = Column(Boolean, default=False)
+
+class GithubAuditLog(Base):
+    __tablename__ = 'github_audit_logs'
+    id = Column(String, primary_key=True)
+    finding_id = Column(String, index=True)
+    action = Column(String)
+    actor = Column(String)
+    details = Column(String)
+    timestamp = Column(Float)
+
 class KnowledgeBaseEngine:
-    def __init__(self, db_dir: str = None):
-        if not db_dir:
-            db_dir = os.path.join(tempfile.gettempdir(), 'autopsy_kb')
-        os.makedirs(db_dir, exist_ok=True)
-        
-        # SQLite
-        db_path = os.path.join(db_dir, 'intelligence.db')
-        self.engine = create_engine(f'sqlite:///{db_path}')
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
-        
-        # ChromaDB Vector DB
-        self.vector_available = CHROMA_AVAILABLE
-        if self.vector_available:
+    def __init__(self, db_url: str = None):
+        self.vector_available = False
+        if not db_url:
+            db_url = os.environ.get('DATABASE_URL', '')
+            
+        try:
+            if db_url and db_url.startswith('postgres'):
+                self.engine = create_engine(db_url)
+                # Try creating pgvector extension
+                with self.engine.connect() as conn:
+                    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                self.vector_available = True
+            else:
+                # Fallback to sqlite without vector
+                db_dir = os.path.join(tempfile.gettempdir(), 'autopsy_kb')
+                os.makedirs(db_dir, exist_ok=True)
+                db_path = os.path.join(db_dir, 'intelligence_v2.db')
+                self.engine = create_engine(f'sqlite:///{db_path}')
+                
             try:
-                self.chroma_client = chromadb.PersistentClient(path=os.path.join(db_dir, 'chroma_db'))
-                self.collection = self.chroma_client.get_or_create_collection(name="repo_chunks")
-            except Exception as e:
-                print(f"Warning: ChromaDB initialization failed: {e}")
-                self.vector_available = False
-        
-        # Fallback in-memory vector mock
-        self.mock_vectors = []
+                # Remove RepoEmbedding from Base metadata for sqlite
+                if 'repo_embeddings' in Base.metadata.tables:
+                    Base.metadata.remove(Base.metadata.tables['repo_embeddings'])
+                Base.metadata.create_all(self.engine)
+            except Exception:
+                pass
+            
+            # Ensure new columns exist for SQLite fallback if upgrading from older version
+            with self.engine.connect() as conn:
+                for stmt in [
+                    "ALTER TABLE repositories ADD COLUMN fingerprint VARCHAR",
+                    "ALTER TABLE repo_chunks ADD COLUMN symbol_name VARCHAR",
+                    "ALTER TABLE repo_chunks ADD COLUMN language VARCHAR",
+                    "ALTER TABLE repo_chunks ADD COLUMN tags JSON"
+                ]:
+                    try:
+                        conn.execute(text(stmt))
+                    except Exception:
+                        pass
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+
+            self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        except Exception as e:
+            logging.error(f"Database initialization error: {e}")
+            # Absolute fallback
+            db_dir = os.path.join(tempfile.gettempdir(), 'autopsy_kb')
+            os.makedirs(db_dir, exist_ok=True)
+            self.engine = create_engine(f'sqlite:///{os.path.join(db_dir, "fallback_v2.db")}')
+            
+            try:
+                # Remove RepoEmbedding from Base metadata for sqlite
+                if 'repo_embeddings' in Base.metadata.tables:
+                    Base.metadata.remove(Base.metadata.tables['repo_embeddings'])
+                Base.metadata.create_all(self.engine)
+            except Exception:
+                pass
+                
+            # Ensure new columns exist for SQLite fallback if upgrading from older version
+            with self.engine.connect() as conn:
+                for stmt in [
+                    "ALTER TABLE repositories ADD COLUMN fingerprint VARCHAR",
+                    "ALTER TABLE repo_chunks ADD COLUMN symbol_name VARCHAR",
+                    "ALTER TABLE repo_chunks ADD COLUMN language VARCHAR",
+                    "ALTER TABLE repo_chunks ADD COLUMN tags JSON"
+                ]:
+                    try:
+                        conn.execute(text(stmt))
+                    except Exception:
+                        pass
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+                        
+            self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def get_session(self):
         return self.Session()
 
-    def get_or_create_repo(self, url: str, owner: str, name: str, branch: str) -> Repository:
+    def get_or_create_repo(self, url: str, owner: str, name: str, branch: str, fingerprint: str = None) -> Repository:
         session = self.get_session()
         try:
             repo = session.query(Repository).filter_by(url=url).first()
             if not repo:
-                repo = Repository(id=uuid.uuid4().hex, url=url, owner=owner, name=name, default_branch=branch)
+                repo = Repository(id=uuid.uuid4().hex, url=url, owner=owner, name=name, default_branch=branch, fingerprint=fingerprint)
                 session.add(repo)
+                session.commit()
+            elif fingerprint and repo.fingerprint != fingerprint:
+                repo.fingerprint = fingerprint
                 session.commit()
             return repo
         finally:
@@ -111,87 +319,38 @@ class KnowledgeBaseEngine:
             scan = RepoScan(id=scan_id, repo_id=repo_id, branch=branch, commit_sha=commit_sha, score=score, 
                             created_at=time.time(), kpis=kpis, tech_stack=tech_stack)
             session.add(scan)
-            
-            trend = RepoTrend(id=uuid.uuid4().hex, repo_id=repo_id, score=score, created_at=time.time())
-            session.add(trend)
             session.commit()
         finally:
             session.close()
 
-    def save_finding(self, scan_id: str, title: str, file_path: str, severity: str, owner_team: str, category: str, description: str, fix: str, code_snippet: str, effort: str):
+    def index_chunks(self, repo_id: str, chunks: List[Dict[str, Any]], embeddings: List[List[float]] = None):
         session = self.get_session()
         try:
-            f = RepoFinding(id=uuid.uuid4().hex, scan_id=scan_id, title=title, file_path=file_path, severity=severity, owner_team=owner_team, category=category, description=description, fix=fix, code_snippet=code_snippet, effort=effort)
-            session.add(f)
-            session.commit()
-        finally:
-            session.close()
-
-    def index_chunks(self, repo_id: str, chunks: List[Dict[str, str]]):
-        session = self.get_session()
-        try:
-            # Delete old chunks for this repo
-            session.query(KBChunk).filter_by(repo_id=repo_id).delete()
-            
+            session.query(RepoChunk).filter_by(repo_id=repo_id).delete()
             if self.vector_available:
-                try:
-                    # Delete old vectors
-                    res = self.collection.get(where={"repo_id": repo_id})
-                    if res['ids']:
-                        self.collection.delete(ids=res['ids'])
-                except Exception: pass
-            else:
-                self.mock_vectors = [v for v in self.mock_vectors if v['repo_id'] != repo_id]
-
-            docs = []
-            metadatas = []
-            ids = []
+                session.query(RepoEmbedding).filter_by(repo_id=repo_id).delete()
             
-            for c in chunks:
+            for i, c in enumerate(chunks):
                 chunk_id = uuid.uuid4().hex
-                kbc = KBChunk(id=chunk_id, repo_id=repo_id, file_path=c['file_path'], content=c['content'], chunk_type=c['type'])
-                session.add(kbc)
+                chunk = RepoChunk(
+                    id=chunk_id, repo_id=repo_id, file_path=c.get('file_path'), 
+                    content=c.get('content'), chunk_type=c.get('chunk_type'),
+                    symbol_name=c.get('symbol_name'), language=c.get('language'),
+                    tags=c.get('tags', [])
+                )
+                session.add(chunk)
                 
-                docs.append(c['content'])
-                metadatas.append({"repo_id": repo_id, "file_path": c['file_path'], "type": c['type']})
-                ids.append(chunk_id)
-
-                if not self.vector_available:
-                    self.mock_vectors.append({"id": chunk_id, "repo_id": repo_id, "content": c['content'], "metadata": metadatas[-1]})
-
-            session.commit()
+                if self.vector_available and embeddings and i < len(embeddings):
+                    emb = RepoEmbedding(
+                        id=uuid.uuid4().hex, chunk_id=chunk_id, repo_id=repo_id,
+                        embedding_profile="source_code", embedding=embeddings[i]
+                    )
+                    session.add(emb)
             
-            if self.vector_available and docs:
-                try:
-                    self.collection.add(documents=docs, metadatas=metadatas, ids=ids)
-                except Exception as e:
-                    print(f"Failed to add to Chroma: {e}")
-                    
+            session.commit()
             return len(chunks)
         finally:
             session.close()
-
-    def retrieve_context(self, repo_id: str, query: str, n_results=5) -> List[Dict]:
-        if self.vector_available:
-            try:
-                results = self.collection.query(query_texts=[query], n_results=n_results, where={"repo_id": repo_id})
-                if not results['documents'] or not results['documents'][0]:
-                    return []
-                return [{"content": doc, "metadata": meta} for doc, meta in zip(results['documents'][0], results['metadatas'][0])]
-            except Exception:
-                return []
-        else:
-            # Simple keyword matching mock retrieval
-            matches = []
-            q_words = query.lower().split()
-            for v in self.mock_vectors:
-                if v['repo_id'] == repo_id:
-                    content_lower = v['content'].lower()
-                    score = sum(1 for w in q_words if w in content_lower)
-                    if score > 0:
-                        matches.append((score, v))
-            matches.sort(key=lambda x: x[0], reverse=True)
-            return [{"content": m[1]['content'], "metadata": m[1]['metadata']} for m in matches[:n_results]]
 
     def get_repo_history(self, repo_id: str):
         session = self.get_session()
@@ -202,7 +361,6 @@ class KnowledgeBaseEngine:
             previous = scans[1] if len(scans) > 1 else scans[0]
             current = scans[0]
             
-            # Simple trend analysis
             trend = "stable"
             if current.score > previous.score: trend = "improving"
             elif current.score < previous.score: trend = "degrading"
@@ -211,8 +369,20 @@ class KnowledgeBaseEngine:
                 "previous_score": previous.score,
                 "current_score": current.score,
                 "trend": trend,
-                "new_issues": 0, # To be computed if needed
+                "new_issues": 0,
                 "fixed_issues": 0
             }
+        finally:
+            session.close()
+
+    def log_retrieval(self, repo_id: str, task_type: str, query: str, retrieved_ids: List[str]):
+        session = self.get_session()
+        try:
+            log = RetrievalLog(
+                id=uuid.uuid4().hex, repo_id=repo_id, task_type=task_type,
+                query=query, retrieved_chunk_ids=retrieved_ids, timestamp=time.time()
+            )
+            session.add(log)
+            session.commit()
         finally:
             session.close()

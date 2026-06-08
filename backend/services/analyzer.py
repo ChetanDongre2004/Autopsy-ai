@@ -10,6 +10,14 @@ from collections import defaultdict
 from datetime import datetime
 from services.kb_service import KnowledgeBaseEngine
 from services.smart_findings_engine import SmartFindingsEngine
+from core.chunking_service import ChunkingService
+from core.embedding_service import EmbeddingService
+from core.fingerprint_engine import FingerprintEngine
+from core.retrieval_service import RetrievalEngine
+from core.repository_graph import RepositoryGraph
+from core.historical_memory import HistoricalMemory
+from core.qa_engine import QAEngine
+from core.pentest_engine import PentestEngine
 
 class RepoIntelligence:
     def __init__(self, repo_url, branch='main', mode='full', is_local=False, local_path_override=None):
@@ -28,10 +36,18 @@ class RepoIntelligence:
         self.scan_start = time.time()
         self.kb_engine = KnowledgeBaseEngine()
         self.smart_engine = SmartFindingsEngine()
-        
+        self.chunking_service = ChunkingService()
+        self.embedding_service = EmbeddingService()
+        self.fingerprint_engine = FingerprintEngine()
+        self.retrieval_engine = RetrievalEngine(self.kb_engine.get_session())
+        self.repository_graph = RepositoryGraph()
+        self.historical_memory = HistoricalMemory(self.kb_engine.get_session())
         # Seed deterministic RNG based on URL or path
         self.seed_val = int(hashlib.md5((self.repo_url + self.local_path).encode()).hexdigest(), 16)
         self.rng = random.Random(self.seed_val)
+        
+        self.qa_engine = QAEngine(self.kb_engine.get_session(), self.retrieval_engine, self.rng)
+        self.pentest_engine = PentestEngine(self.kb_engine.get_session(), self.retrieval_engine, self.rng)
 
     def clone_repo(self):
         def remove_readonly(func, path, excinfo):
@@ -159,72 +175,7 @@ class RepoIntelligence:
         
         return "Backend Team"
 
-    def _generate_deterministic_qa(self, files_cnt, test_files, coverage, tech_stack):
-        total_tests = self.rng.randint(max(50, files_cnt), max(100, files_cnt * 5))
-        failed_tests = self.rng.randint(0, min(10, total_tests // 10))
-        flaky_tests = self.rng.randint(0, min(5, total_tests // 20))
-        passed_tests = total_tests - failed_tests - flaky_tests
-        release_score = max(0, min(100, int(coverage) - (failed_tests * 2) - (flaky_tests * 1)))
-        
-        test_runs = []
-        for f in test_files[:10]:
-            test_runs.append({
-                "name": f"Test suite for {os.path.basename(f)}",
-                "suite": "Unit Tests" if "unit" in f.lower() else "Integration" if "integration" in f.lower() else "Core",
-                "priority": self.rng.choice(["P0", "P1", "P2"]),
-                "status": self.rng.choice(["passed", "passed", "passed", "failed", "flaky"]),
-                "duration": self.rng.randint(10, 5000),
-                "env": "Staging",
-                "browser": "Headless Chrome",
-                "error_msg": "AssertionError: Expected 200 but got 404" if self.rng.random() > 0.8 else None
-            })
-            
-        for i in range(max(2, len(test_files) // 2)):
-            test_runs.append({
-                "name": f"UI Verification: {self.rng.choice(['Login', 'Checkout', 'Dashboard', 'Settings'])} Flow",
-                "suite": "E2E Tests",
-                "priority": "P0",
-                "status": self.rng.choice(["passed", "passed", "failed"]),
-                "duration": self.rng.randint(2000, 15000),
-                "env": "QA",
-                "browser": self.rng.choice(["Chrome", "Firefox", "Safari"]),
-                "error_msg": "TimeoutError: Element not found" if self.rng.random() > 0.7 else None
-            })
-            
-        failures = [t for t in test_runs if t['status'] == 'failed']
-        for f in failures:
-            f['trace'] = f"Error: {f['error_msg']}\n    at Context.<anonymous> ({f['name'].split()[-1]}:42:15)\n    at processImmediate (node:internal/timers:466:21)"
-            f['ai_hypothesis'] = "The recent DOM structure change likely broke the test selector. Consider using data-testid attributes."
-            f['suggested_fix'] = "cy.get('[data-testid=\"submit-btn\"]').click();"
-            
-        return {
-            "overview": {
-                "total_tests": total_tests, "passed_tests": passed_tests, "failed_tests": failed_tests, "flaky_tests": flaky_tests,
-                "coverage": f"{coverage}%", "release_score": release_score, "release_decision": "Go" if release_score > 80 else "Hold",
-                "block_reasons": [f['error_msg'] for f in failures[:2]]
-            },
-            "test_runs": test_runs,
-            "api_tests": [t for t in test_runs if t['suite'] == 'Integration'],
-            "e2e_tests": [t for t in test_runs if t['suite'] == 'E2E Tests'],
-            "performance_tests": [],
-            "failures": failures,
-            "coverage_engine": {
-                "overall": coverage, "ui_flow": self.rng.randint(50, 95), "api_endpoints": self.rng.randint(60, 98),
-                "critical_path": self.rng.randint(70, 100), "untested_features": ["Legacy Auth Module", "Payment Retry Logic"] if coverage < 60 else []
-            },
-            "flaky_intelligence": [
-                {"name": "Session Timeout Reset", "suite": "Auth", "flake_rate": "15%", "root_cause": "Race condition in state teardown.", "suggested_fix": "await waitForStateReset();", "history": ["passed", "failed", "passed", "passed"]}
-            ] if flaky_tests > 0 else [],
-            "ci_cd_pipeline": {
-                "system": "GitHub Actions" if "GitHub Actions" in tech_stack.get("DevOps", []) else "Jenkins",
-                "status": "Success" if release_score > 70 else "Failed",
-                "build": f"#{self.rng.randint(100, 9999)}",
-                "triggered_by": "Push to main",
-                "duration": f"{self.rng.randint(1, 10)}m {self.rng.randint(0, 59)}s"
-            },
-            "trends": [{"date": f"Day {i}", "passed": total_tests - self.rng.randint(0, 15), "failed": self.rng.randint(0, 15)} for i in range(1, 8)],
-            "recommendations": ["Increase unit test coverage on core utility modules.", "Fix flaky auth selectors in E2E suite."]
-        }
+
 
     def _generate_deterministic_pentest(self, tech_stack, repo_url, all_files):
         assets = self.rng.randint(5, 50)
@@ -342,8 +293,15 @@ class RepoIntelligence:
         update_progress(50, "Indexing Knowledge Base...")
         chunks = []
         for file_path, content in file_contents.items():
-            chunks.append({"file_path": file_path, "content": content, "type": "code" if not file_path.endswith('.md') else "doc"})
-        chunks_embedded = self.kb_engine.index_chunks(repo_id, chunks)
+            file_chunks = self.chunking_service.parse_and_chunk(file_path, content)
+            chunks.extend(file_chunks)
+        
+        # Build Graph
+        self.repository_graph.build_from_chunks(chunks)
+
+        # Generate Embeddings Sync/Async based on environment
+        embeddings = self.embedding_service.generate_embeddings_sync([c['content'] for c in chunks])
+        chunks_embedded = self.kb_engine.index_chunks(repo_id, chunks, embeddings)
 
         update_progress(60, "Scanning Dependency Matrices...")
         tech_stack = self._detect_tech_stack(all_files, file_contents)
@@ -440,14 +398,29 @@ class RepoIntelligence:
                 recs.append(self.smart_engine.generate_recommendation(insight, tech_stack))
         
         scan_id = uuid.uuid4().hex
+        
+        # Fingerprint Generation
+        fingerprint = self.fingerprint_engine.generate_fingerprint(tech_stack, arch_type, coverage)
+        self.kb_engine.get_or_create_repo(repo_url, self.owner, self.repo_name, self.branch, fingerprint=fingerprint)
+        
         self.kb_engine.save_scan(scan_id, repo_id, self.branch, self.last_updated, overall_score, 
                                  {"files_scanned": files_cnt, "coverage": coverage}, tech_stack)
+                                 
+        # Contextual Retrieval (Mock Logging for Audit)
+        try:
+            self.retrieval_engine.contextual_retrieval(repo_id, "architecture analysis", "system architecture", [], n_results=5)
+            self.kb_engine.log_retrieval(repo_id, "architecture analysis", "system architecture", [])
+        except Exception: pass
                                  
         history_record = self.kb_engine.get_repo_history(repo_id)
         if not history_record:
             history_record = {"previous_score": overall_score, "current_score": overall_score, "trend": "new", "new_issues": 0, "fixed_issues": 0}
 
-        update_progress(95, "Finalizing Premium Dashboard...")
+        # 6. Generate Pentest Intelligence
+        update_progress(95, "Generating Attack Paths & Pentest Reports...")
+        pentest_platform = self.pentest_engine.generate_pentest_intelligence(repo_id, tech_stack, all_files)
+
+        update_progress(100, "Finalizing Enterprise Intelligence Report...")
 
         repo_memory = {
             "is_indexed": True,
@@ -460,25 +433,66 @@ class RepoIntelligence:
             "grounded_insights": grounded_insights
         }
 
+        # --- Inject into Governance Engine ---
+        try:
+            from services.github_hitl_service import GithubGovernanceEngine
+            session = self.kb_engine.get_session()
+            hitl_engine = GithubGovernanceEngine(session)
+            
+            ai_findings = []
+            for r in recs:
+                ai_findings.append({
+                    "title": r,
+                    "type": "Architecture Insight",
+                    "severity": "High" if "Critical" in r or "High" in r else "Medium",
+                    "confidence": 0.90,
+                    "evidence": "Generated by AI Architect",
+                    "reasoning": "Detected from static parsing of core logic patterns."
+                })
+            if grounded_insights:
+                for c in grounded_insights[:5]:
+                    ai_findings.append({
+                        "title": f"Review Critical Component: {c['file_path']}",
+                        "type": "Code Quality Insight",
+                        "severity": c['severity'],
+                        "confidence": 0.85,
+                        "files": [c['file_path']],
+                        "evidence": c['issue'],
+                        "remediation": "Apply dynamic recommended fix."
+                    })
+            for s in sast_findings:
+                ai_findings.append({
+                    "title": f"Security Anomaly: {s['title']}",
+                    "type": "Security Insight",
+                    "severity": s['severity'],
+                    "impact": s['why'],
+                    "confidence": 0.95
+                })
+
+            hitl_engine.create_findings_from_scan(repo_id, self.repo_name, self.branch, ai_findings)
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to generate HITL findings: {e}")
+
         return {
             "repository_overview": {
-                "name": self.repo_name, "owner": self.owner, "branch": self.branch, "files": files_cnt, "folders": folders_cnt,
-                "languages": [x.capitalize() for x in langs if x], "tech_stack": tech_stack, "last_updated": self.last_updated,
-                "stars": max(0, min(100, files_cnt)), "forks": max(0, min(50, folders_cnt)), "scan_duration": f"{scan_duration}s",
-                "status": "Healthy" if coverage > 20 else "At Risk", "visibility": "Public"
-            },
-            "kpis": {
-                "files_scanned": files_cnt, "critical_risks": len(secrets) + len([s for s in sast_findings if s['severity']=='Critical']),
-                "medium_risks": len([s for s in sast_findings if s['severity']=='Medium']) + len([c for c in code_review_issues if c['severity']=='Medium']), 
-                "unused_files": len(unused),
-                "duplicate_code": f"{duplicate_percentage}%", "test_coverage": f"{coverage}%", "open_recommendations": len(recs)
-            },
-            "scores": {
-                "overall": overall_score, "architecture": arch_score, "maintainability": maint_score, "dependencies": min(100, 85 - len(dep_map)),
-                "modularity": arch_score - 5, "scalability": min(100, arch_score + 5), "security": sec_score, "testing": test_score, "performance": perf_score,
-                "risk_exposure": "High" if secrets or sec_score < 50 else "Medium" if sec_score < 80 else "Low"
-            },
-            "summary": {"text": f"This repository contains {files_cnt} files across {folders_cnt} directories, built primarily using {', '.join(tech_stack['Frontend'] + tech_stack['Backend']) if (tech_stack['Frontend'] or tech_stack['Backend']) else 'standard scripts'}. The detected {arch_type} pattern achieved an architecture score of {arch_score}/100. Using dynamic vector retrieval across {chunks_embedded} parsed source chunks, we generated highly contextual recommendations tailored exactly to this codebase's structure."},
+                    "name": self.repo_name, "owner": self.owner, "branch": self.branch, "files": files_cnt, "folders": folders_cnt,
+                    "languages": [x.capitalize() for x in langs if x], "tech_stack": tech_stack, "last_updated": self.last_updated,
+                    "stars": max(0, min(100, files_cnt)), "forks": max(0, min(50, folders_cnt)), "scan_duration": f"{scan_duration}s",
+                    "status": "Healthy" if coverage > 20 else "At Risk", "visibility": "Public"
+                },
+                "kpis": {
+                    "files_scanned": files_cnt, "critical_risks": len(secrets) + len([s for s in sast_findings if s['severity']=='Critical']),
+                    "medium_risks": len([s for s in sast_findings if s['severity']=='Medium']) + len([c for c in code_review_issues if c['severity']=='Medium']), 
+                    "unused_files": len(unused),
+                    "duplicate_code": f"{duplicate_percentage}%", "test_coverage": f"{coverage}%", "open_recommendations": len(recs)
+                },
+                "scores": {
+                    "overall": overall_score, "architecture": arch_score, "maintainability": maint_score, "dependencies": min(100, 85 - len(dep_map)),
+                    "modularity": arch_score - 5, "scalability": min(100, arch_score + 5), "security": sec_score, "testing": test_score, "performance": perf_score,
+                    "risk_exposure": "High" if secrets or sec_score < 50 else "Medium" if sec_score < 80 else "Low"
+                },
+                "summary": {"text": f"This repository contains {files_cnt} files across {folders_cnt} directories, built primarily using {', '.join(tech_stack['Frontend'] + tech_stack['Backend']) if (tech_stack['Frontend'] or tech_stack['Backend']) else 'standard scripts'}. The detected {arch_type} pattern achieved an architecture score of {arch_score}/100. Using dynamic vector retrieval across {chunks_embedded} parsed source chunks, we generated highly contextual recommendations tailored exactly to this codebase's structure."},
             "architecture": {
                 "type": arch_type, "score": arch_score, "folder_quality": "Excellent" if folders_cnt > 3 and arch_score > 70 else "Needs Improvement", "service_boundaries": "Clear" if arch_type != "Monolith" else "Moderate", "coupling_score": "Low" if arch_score > 80 else "High",
                 "explanation": f"The repository is structured as a {arch_type}. {'This offers excellent separation of concerns.' if arch_score > 80 else 'However, tight coupling was detected between internal directories.'}",
@@ -487,7 +501,15 @@ class RepoIntelligence:
             },
             "recommendations": recs,
             "critical_files": [{"file": cf['file_path'], "reason": cf['issue'], "owner": cf.get('owner', 'DevOps'), "severity": cf['severity'], "fix": "Apply dynamic recommended fix."} for cf in grounded_insights[:5]] if grounded_insights else [],
-            "relationships": {"dependency_map": dep_map, "circular_dependencies": circular, "risky_utilities": unused[:2] if unused else []},
+            "relationships": {
+                "dependency_map": dep_map,
+                "circular_dependencies": circular,
+                "risky_utilities": unused[:2] if unused else [],
+                "graph": {
+                    "nodes": [{"id": nid, "label": nval["label"], "properties": {"tags": nval["properties"].get("tags", [])}} for nid, nval in self.repository_graph.nodes.items() if not nid.startswith("http")],
+                    "edges": self.repository_graph.edges
+                }
+            },
             "security_insights": [{"issue": s['title'], "severity": s['severity'], "file": s['file'], "impact": s['why']} for s in sast_findings] + [{"issue": "Hardcoded Secret", "severity": "Critical", "file": s['file'], "impact": "Data Exfiltration"} for s in secrets],
             "testing_health": {
                 "test_files": len(test_files), "missing_tests": auth_paths[:2] if auth_paths else [all_files[0]] if all_files else [], "coverage": f"{coverage}%",
@@ -520,8 +542,8 @@ class RepoIntelligence:
                 "secrets": secrets 
             },
             "code_review_platform": self._generate_deterministic_code_review(sast_findings, code_review_issues, all_files),
-            "qa_platform": self._generate_deterministic_qa(files_cnt, test_files, coverage, tech_stack),
-            "pentest_platform": self._generate_deterministic_pentest(tech_stack, repo_url, all_files),
+            "qa_platform": self.qa_engine.generate_qa_intelligence(repo_id, files_cnt, test_files, all_files, file_contents, tech_stack, coverage),
+            "pentest_platform": pentest_platform,
             "repo_memory": repo_memory,
             "timeline": [{"step": "Repository cloned via Git checkout", "status": "done"}, {"step": "Recursive static traversal completed", "status": "done"}, {"step": "Deep file topology extracted", "status": "done"}, {"step": "Knowledge Base vectorized and mapped", "status": "done"}, {"step": "Smart findings mapped to ownership teams", "status": "done"}]
         }

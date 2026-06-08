@@ -8,6 +8,7 @@ export default function QaAutomationDashboard({ data }) {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [selectedTest, setSelectedTest] = useState(null);
     const [isExecuting, setIsExecuting] = useState(false);
+    const [executionStep, setExecutionStep] = useState(0);
     const [searchQuery, setSearchQuery] = useState("");
 
     // Schedules State
@@ -91,7 +92,20 @@ export default function QaAutomationDashboard({ data }) {
 
     const runTests = async (type) => {
         setIsExecuting(type);
-        setTimeout(() => setIsExecuting(false), 3000); // Simulate execution
+        if (type === 'all') {
+            setExecutionStep(1);
+            const steps = 7;
+            for (let i = 1; i <= steps; i++) {
+                setExecutionStep(i);
+                await new Promise(r => setTimeout(r, 200 + Math.random() * 250));
+            }
+            setTimeout(() => {
+                setIsExecuting(false);
+                setExecutionStep(0);
+            }, 300);
+        } else {
+            setTimeout(() => setIsExecuting(false), 600); // Suite level simulate
+        }
     };
 
     const filteredRuns = qa.test_runs?.filter(t => t.name?.toLowerCase().includes(searchQuery.toLowerCase()) || t.suite?.toLowerCase().includes(searchQuery.toLowerCase())) || [];
@@ -431,7 +445,6 @@ export default function QaAutomationDashboard({ data }) {
                 );
             case 'api':
             case 'e2e':
-            case 'performance':
                 const suiteData = qa[`${activeTab}_tests`] || qa.test_runs?.filter(t => t.suite?.toLowerCase().includes(activeTab)) || [];
                 return (
                     <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-6 shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -475,6 +488,90 @@ export default function QaAutomationDashboard({ data }) {
                                     No tests populated in this suite yet. Check your integration mappings.
                                 </div>
                             )}
+                        </div>
+                    </div>
+                );
+            case 'performance':
+                const perfTests = qa.performance_tests || [];
+                const perfIntel = qa.performance_intelligence || {};
+                return (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-lg flex flex-col justify-center">
+                                <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400"/> p95 Latency</div>
+                                <div className="text-3xl font-black text-amber-400">{perfIntel.p95_latency || 'N/A'}</div>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-lg flex flex-col justify-center">
+                                <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-2"><Zap className="w-4 h-4 text-red-400"/> p99 Latency</div>
+                                <div className="text-3xl font-black text-red-400">{perfIntel.p99_latency || 'N/A'}</div>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-lg flex flex-col justify-center">
+                                <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-2"><Activity className="w-4 h-4 text-green-400"/> Throughput</div>
+                                <div className="text-2xl font-black text-green-400">{perfIntel.throughput || 'N/A'}</div>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-lg flex flex-col justify-center">
+                                <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-2"><HardDrive className="w-4 h-4 text-blue-400"/> Memory</div>
+                                <div className="text-3xl font-black text-blue-400">{perfIntel.memory_consumption || 'N/A'}</div>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-lg flex flex-col justify-center">
+                                <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-2"><Server className="w-4 h-4 text-purple-400"/> CPU Spikes</div>
+                                <div className="text-2xl font-black text-purple-400">{perfIntel.cpu_spikes || 'N/A'}</div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-[2rem] p-6 shadow-xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold text-zinc-100 flex items-center gap-2"><Activity className="w-5 h-5 text-indigo-400"/> Performance Suite Execution</h3>
+                                    <button onClick={() => runTests('performance')} disabled={isExecuting} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-sm transition flex items-center gap-2 shadow-lg">
+                                        {isExecuting === 'performance' ? <Activity className="w-4 h-4 animate-spin"/> : <PlayCircle className="w-4 h-4"/>} 
+                                        {isExecuting === 'performance' ? 'Running Load...' : `Trigger Load Tests`}
+                                    </button>
+                                </div>
+                                <div className="space-y-3">
+                                    {perfTests.map((test, i) => (
+                                        <div key={i} className="flex flex-col md:flex-row items-start md:items-center justify-between p-5 bg-zinc-950/50 border border-zinc-800 rounded-2xl hover:border-zinc-700 transition">
+                                            <div className="flex items-start gap-4">
+                                                <div className="mt-1">{getStatusIcon(test.status)}</div>
+                                                <div>
+                                                    <div className="font-bold text-zinc-200 text-base flex items-center gap-2">
+                                                        {test.name}
+                                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-400`}>{test.priority || 'P1'}</span>
+                                                    </div>
+                                                    {test.endpoint && <div className="text-xs font-mono text-indigo-400 bg-indigo-400/10 px-2 py-1 rounded inline-block mt-2 border border-indigo-400/20">{test.endpoint}</div>}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-6 mt-4 md:mt-0">
+                                                <div className="text-right">
+                                                    <div className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Duration</div>
+                                                    <div className="text-sm font-mono text-zinc-300">{(test.duration/1000).toFixed(1)}s</div>
+                                                </div>
+                                                <span className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider border ${getStatusColor(test.status)}`}>{test.status}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {perfTests.length === 0 && (
+                                        <div className="text-center text-zinc-500 p-10 font-medium bg-zinc-950/50 rounded-2xl border border-zinc-800 border-dashed">
+                                            No load tests executed.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-6 shadow-xl flex flex-col">
+                                <h3 className="text-xl font-bold text-zinc-100 mb-6 flex items-center gap-2"><Zap className="w-5 h-5 text-yellow-400"/> AI Performance Insights</h3>
+                                <div className="flex-1 space-y-4">
+                                    {perfIntel.insights?.length > 0 ? perfIntel.insights.map((insight, i) => (
+                                        <div key={i} className="p-4 bg-yellow-500/10 rounded-2xl border border-yellow-500/20 flex items-start gap-3">
+                                            <AlertTriangle className="w-5 h-5 text-yellow-400 shrink-0 mt-0.5"/>
+                                            <p className="text-sm text-yellow-100/90 leading-relaxed font-medium">{insight}</p>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center text-zinc-500 p-10 font-medium bg-zinc-950/50 rounded-2xl border border-zinc-800 border-dashed">
+                                            System performance is optimal.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 );
@@ -580,6 +677,34 @@ export default function QaAutomationDashboard({ data }) {
                                     </button>
                                 </div>
                             </form>
+                        </motion.div>
+                    </div>
+                )}
+                
+                {isExecuting === 'all' && executionStep > 0 && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+                        <motion.div 
+                            initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+                            className="bg-zinc-900 border border-zinc-800 rounded-[2rem] shadow-[0_0_100px_rgba(79,70,229,0.15)] w-full max-w-xl p-8 text-center"
+                        >
+                            <Activity className="w-16 h-16 text-indigo-500 animate-spin mx-auto mb-6" />
+                            <h2 className="text-3xl font-black text-white mb-8">Enterprise Test Orchestration</h2>
+                            <div className="space-y-4 text-left">
+                                {[
+                                    { step: 1, label: "Repository Ingestion & KB Sync" },
+                                    { step: 2, label: "Risk Analysis & Impact Mapping" },
+                                    { step: 3, label: "Test Discovery & Structure Parse" },
+                                    { step: 4, label: "AI Test Generation Engine Active" },
+                                    { step: 5, label: "Executing Simulated Pipelines (E2E/API/Perf)" },
+                                    { step: 6, label: "Analyzing Failures & Triaging Logs" },
+                                    { step: 7, label: "Generating Release Recommendation" }
+                                ].map(s => (
+                                    <div key={s.step} className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${executionStep > s.step ? 'bg-green-500/10 border-green-500/30' : executionStep === s.step ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-zinc-950 border-zinc-800/50'}`}>
+                                        {executionStep > s.step ? <CheckCircle2 className="w-6 h-6 text-green-500" /> : executionStep === s.step ? <Activity className="w-6 h-6 text-indigo-500 animate-pulse" /> : <div className="w-6 h-6 rounded-full border-2 border-zinc-700" />}
+                                        <span className={`font-bold ${executionStep >= s.step ? 'text-white' : 'text-zinc-600'}`}>{s.label}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </motion.div>
                     </div>
                 )}
