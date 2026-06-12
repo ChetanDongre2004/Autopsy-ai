@@ -5,10 +5,11 @@ import CodeSecurityDashboard from "./components/CodeSecurityDashboard";
 import AiCodeReviewDashboard from "./components/AiCodeReviewDashboard";
 import QaAutomationDashboard from "./components/QaAutomationDashboard";
 import PentestDashboard from "./components/PentestDashboard";
+import AmdAiHub from "./components/AmdAiHub";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import LandingPage from "./pages/LandingPage";
-import { Github, ScanSearch, Terminal, ShieldAlert, Code2, HeartPulse, UserCircle, Target, Blocks, Zap, FileText } from "lucide-react";
+import { Github, ScanSearch, Terminal, ShieldAlert, Code2, HeartPulse, Target, Blocks, Zap, Cpu } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function App() {
@@ -31,14 +32,7 @@ export default function App() {
   const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
   const location = useLocation();
 
-  const mockTabContent = (name, Icon, description) => (
-    <div className="flex flex-col items-center justify-center p-20 bg-zinc-900/40 border border-zinc-800 rounded-3xl min-h-[500px] mt-10">
-       <div className="text-zinc-500 mb-6 p-4 bg-zinc-900 rounded-2xl border border-zinc-800/80"><Icon className="w-12 h-12"/></div>
-       <h2 className="text-3xl font-bold text-zinc-300 mb-4">{name}</h2>
-       <p className="text-xl text-zinc-500 text-center max-w-lg mb-6">{description}</p>
-       <button className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-xl transition">Contact Sales to Unlock Beta</button>
-    </div>
-  );
+
 
   const getProductHero = () => {
     switch (location.pathname) {
@@ -52,6 +46,8 @@ export default function App() {
         return { title: "QA Automation Platform", desc: "Detect missing tests and heavily boost your coverage by auto-generating robust edge case simulations.", icon: <Zap className="w-5 h-5 text-amber-400" /> };
       case "/products/pentest":
         return { title: "Enterprise Pentesting Platform", desc: "Run aggressive DAST scanning, unearth hidden API vulnerabilities, map attack paths, and remediate exploits.", icon: <Target className="w-5 h-5 text-red-500" /> };
+      case "/products/amd-ai-hub":
+        return { title: "AMD AI Observability & Model Discovery Hub", desc: "Enterprise AI architecture mapping, model suitability analysis, and local processing benchmarks.", icon: <Cpu className="w-5 h-5 text-orange-400" /> };
       default:
         return { title: "Enterprise Platform", desc: "Analyze any codebase instantly.", icon: <Terminal className="w-5 h-5" /> };
     }
@@ -342,10 +338,8 @@ export default function App() {
                   <Route path="/products/security" element={<CodeSecurityDashboard data={data} />} />
                   <Route path="/products/review" element={<AiCodeReviewDashboard data={data} />} />
                   <Route path="/products/qa" element={<QaAutomationDashboard data={data} />} />
-                  <Route path="/products/quality" element={mockTabContent("Code Quality Intelligence", HeartPulse, "Monitor technical debt, duplicate code segments, and measure exact team maintainability scores.")} />
                   <Route path="/products/pentest" element={<PentestDashboard data={data} />} />
-                  <Route path="/products/developer360" element={mockTabContent("Developer 360", UserCircle, "Evaluate engineering productivity, pinpoint architecture knowledge silos, and reward top maintainers.")} />
-                  <Route path="/products/reports" element={mockTabContent("Enterprise Reports Center", FileText, "Export raw audit CSVs or gorgeous Executive Summary PDFs detailing your absolute threat vectors.")} />
+                  <Route path="/products/amd-ai-hub" element={<AmdAiHub data={data} />} />
                   <Route path="*" element={<Navigate to="/products/github" replace />} />
                </Routes>
             </motion.div>

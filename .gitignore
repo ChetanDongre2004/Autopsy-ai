@@ -39,6 +39,7 @@ temp_repos/
 backend/temp/
 backend/.autopsy_cache/
 backend/autopsy_jobs.db
+backend/data/
 
 # Local development test artifacts
 backend/test_venv/

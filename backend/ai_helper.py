@@ -21,6 +21,13 @@ def get_runtime_ai_config() -> dict:
             "model": os.getenv("LOCAL_LLM_MODEL", "qwen2.5-coder:7b"),
             "configured_key_count": 1,
         }
+    if os.getenv("OPENROUTER_API_KEY"):
+        return {
+            "provider": "openrouter",
+            "api_key_configured": True,
+            "model": os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash:free"),
+            "configured_key_count": 1,
+        }
     if os.getenv("GEMINI_API_KEY"):
         return {
             "provider": "gemini",
@@ -88,9 +95,29 @@ async def call_ai(system_prompt: str, user_message: str) -> str:
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"]
             except Exception as e:
-                print(f"[Ollama] Connection to local model failed: {e}.")
-                if "SonarQube-style code review" in system_prompt or "Review code" in user_message:
-                    return json_review_simulation()
+                raise e
+
+        elif provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            try:
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "HTTP-Referer": "http://localhost:3000",
+                        "X-Title": "Autopsy AI",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message},
+                        ],
+                    },
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+            except Exception as e:
                 raise e
 
         elif provider == "gemini":
@@ -106,9 +133,6 @@ async def call_ai(system_prompt: str, user_message: str) -> str:
                 data = response.json()
                 return data["candidates"][0]["content"]["parts"][0]["text"]
             except Exception as e:
-                print(f"[Gemini] Connection or API call failed: {e}.")
-                if "SonarQube-style code review" in system_prompt or "Review code" in user_message:
-                    return json_review_simulation()
                 raise e
 
         elif provider == "openai":
@@ -128,9 +152,6 @@ async def call_ai(system_prompt: str, user_message: str) -> str:
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"]
             except Exception as e:
-                print(f"[OpenAI] Call failed: {e}.")
-                if "SonarQube-style code review" in system_prompt or "Review code" in user_message:
-                    return json_review_simulation()
                 raise e
 
         elif provider == "anthropic":
@@ -152,50 +173,9 @@ async def call_ai(system_prompt: str, user_message: str) -> str:
                 response.raise_for_status()
                 return response.json()["content"][0]["text"]
             except Exception as e:
-                print(f"[Anthropic] Call failed: {e}.")
-                if "SonarQube-style code review" in system_prompt or "Review code" in user_message:
-                    return json_review_simulation()
                 raise e
 
         raise ValueError(f"Unknown provider: {provider}")
 
-
-def json_review_simulation() -> str:
-    """Returns a realistic simulated SonarQube-style JSON review for AMD Offline mode."""
-    import json
-    return json.dumps({
-        "summary": "[AMD Ryzen AI / Radeon ROCm Offline Simulation] Code reviewed locally with AMD hardware acceleration. No critical architectural issues detected in the snippet.",
-        "score": 92,
-        "grade": "A",
-        "issues": [
-            {
-                "type": "Performance",
-                "severity": "warning",
-                "line": 12,
-                "function_name": "process_data",
-                "description": "Redundant loop can be optimized with list comprehension.",
-                "what": "Standard for-loop appending items to a list is slower.",
-                "why": "Using list comprehension executes closer to C-level speeds, optimized by AMD Zen architectures.",
-                "impact": "Sub-optimal CPU cycle utilization.",
-                "standard": "Use idiomatic Python list comprehensions.",
-                "suggestion": "Convert to [x * 2 for x in data]",
-                "fix": "data_doubled = [x * 2 for x in data]"
-            }
-        ],
-        "positives": [
-            "Good functional abstraction.",
-            "Appropriate naming conventions."
-        ],
-        "metrics": {
-            "totalIssues": 1,
-            "critical": 0,
-            "warnings": 1,
-            "info": 0,
-            "estimatedFixTime": "2 minutes",
-            "cyclomaticComplexity": "low",
-            "duplications": 0,
-            "codeSmells": 1
-        }
-    })
 
 

@@ -1,17 +1,15 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Terminal, Code2, ShieldAlert, HeartPulse, Zap, Target, UserCircle, FileText, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Terminal, Code2, ShieldAlert, Zap, Target, ArrowRight, CheckCircle2, Cpu } from "lucide-react";
 
 export default function LandingPage() {
   const products = [
     { name: "GitHub Repository Intelligence", path: "/products/github", icon: <Terminal className="w-8 h-8 text-blue-400"/>, desc: "Analyze architecture, health, and onboarding automatically." },
     { name: "Security Intelligence Platform", path: "/products/security", icon: <ShieldAlert className="w-8 h-8 text-red-400"/>, desc: "Detect vulnerabilities, secrets, and runtime security risks." },
     { name: "AI Code Review Platform", path: "/products/review", icon: <Code2 className="w-8 h-8 text-indigo-400"/>, desc: "Senior-level multi-language code review with insights." },
-    { name: "Code Quality Platform", path: "/products/quality", icon: <HeartPulse className="w-8 h-8 text-green-400"/>, desc: "Metrics, maintainability, duplication, and technical debt." },
     { name: "QA Automation Platform", path: "/products/qa", icon: <Zap className="w-8 h-8 text-amber-400"/>, desc: "Detect missing tests and generate robust unit tests." },
     { name: "Pentesting Platform", path: "/products/pentest", icon: <Target className="w-8 h-8 text-orange-400"/>, desc: "Safe simulated attack checks, fuzzing, and API risks." },
-    { name: "Developer 360", path: "/products/developer360", icon: <UserCircle className="w-8 h-8 text-cyan-400"/>, desc: "Ownership, hotspots, and team productivity analytics." },
-    { name: "Reports Center", path: "/products/reports", icon: <FileText className="w-8 h-8 text-zinc-400"/>, desc: "Export enterprise reports, trends, and compliance." }
+    { name: "AMD AI Acceleration Hub", path: "/products/amd-ai-hub", icon: <Cpu className="w-8 h-8 text-orange-400"/>, desc: "Local RAG Code Chat, model discovery, and telemetry benchmarks." }
   ];
 
   const stats = [

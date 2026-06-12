@@ -914,7 +914,7 @@ export default function RepoDashboard({ data }) {
            <div className="relative z-10">
                <h2 className="text-indigo-400 font-bold uppercase tracking-widest text-xs mb-4 flex items-center gap-2"><Zap className="w-4 h-4"/> AI Executive Consultant Summary</h2>
                <div className="bg-zinc-950/50 border border-indigo-500/10 p-5 rounded-xl shadow-inner">
-                  <p className="text-zinc-300 text-sm leading-loose tracking-wide">{repoData.summary.text}</p>
+                  <p className="text-zinc-300 text-sm leading-loose tracking-wide whitespace-pre-line">{repoData.summary.text}</p>
                </div>
            </div>
         </motion.div>

@@ -303,6 +303,15 @@ class RepoIntelligence:
         embeddings = self.embedding_service.generate_embeddings_sync([c['content'] for c in chunks])
         chunks_embedded = self.kb_engine.index_chunks(repo_id, chunks, embeddings)
 
+        # Index into ChromaDB for vector search
+        try:
+            from core.hybrid_search import HybridSearch
+            hybrid = HybridSearch(self.kb_engine.get_session())
+            hybrid.index_chunks(repo_id, chunks, embeddings)
+        except Exception as e:
+            import logging
+            logging.warning(f"[RepoIntelligence] ChromaDB indexing skipped: {e}")
+
         update_progress(60, "Scanning Dependency Matrices...")
         tech_stack = self._detect_tech_stack(all_files, file_contents)
         scan_duration = round(time.time() - self.scan_start, 2)
@@ -383,7 +392,269 @@ class RepoIntelligence:
             
         circular = [f"{core_files[0]} ⇆ {core_files[1]}"] if len(core_files) >= 2 and coverage < 80 else []
 
-        update_progress(90, "Generating AI Mitigation Steps...")
+        # AI Executive Summary and Codebase Analysis Generation
+        import asyncio
+        from ai_helper import call_ai
+
+        def clean_and_parse_json(text):
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                cleaned = "\n".join(lines).strip()
+            try:
+                return json.loads(cleaned)
+            except Exception as e:
+                try:
+                    start_idx = cleaned.find('{')
+                    end_idx = cleaned.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        return json.loads(cleaned[start_idx:end_idx+1])
+                except Exception:
+                    pass
+                raise e
+
+        update_progress(80, "Generating AI Mitigation Steps...")
+
+        # Setup prompt
+        system_prompt = (
+            "You are Autopsy AI - AMD Enterprise AI Repository Intelligence & Evaluation Engine.\n"
+            "Your task is to analyze the provided repository context (code snippets, file structure, readme, tech stack, and heuristic findings) and return a highly detailed, comprehensive intelligence report.\n"
+            "You MUST return ONLY a valid JSON object. Do not include markdown code block formatting (such as ```json) or any introductory or concluding text.\n\n"
+            "RESPONSE SCHEMA:\n"
+            "{\n"
+            '  "executive_summary": "Provide a 3-5 sentence overview explaining what the application does, its primary purpose, and key capabilities.",\n'
+            '  "architectural_assessment": "Analyze the codebase style, separation of concerns, strengths, weaknesses, and scalability potential.",\n'
+            '  "models": [\n'
+            "    {\n"
+            '      "model_name": "Short name (e.g. Gemini 2.5 Pro)",\n'
+            '      "full_name": "Full identifier (e.g. google/gemini-2.5-pro)",\n'
+            '      "provider": "Provider name (e.g. Google)",\n'
+            '      "file_path": "Path to file declaring or utilizing the model",\n'
+            '      "purpose": "What this model is used for in the repository",\n'
+            '      "input_type": "e.g. Text, Image, Audio",\n'
+            '      "output_type": "e.g. Text, JSON, Embeddings",\n'
+            '      "confidence_score": 90\n'
+            "    }\n"
+            "  ],\n"
+            '  "embeddings": [\n'
+            "    {\n"
+            '      "embedding_model": "Embedding model name",\n'
+            '      "provider": "Provider (e.g. OpenAI, HuggingFace)",\n'
+            '      "file_path": "Path to file",\n'
+            '      "purpose": "Purpose of embeddings",\n'
+            '      "confidence_score": 90\n'
+            "    }\n"
+            "  ],\n"
+            '  "vector_dbs": [\n'
+            "    {\n"
+            '      "vector_db": "Vector DB name (e.g. Chroma, FAISS, Pinecone)",\n'
+            '      "file_path": "Path to file",\n'
+            '      "purpose": "Purpose of the database",\n'
+            '      "confidence_score": 90\n'
+            "    }\n"
+            "  ],\n"
+            '  "frameworks": [\n'
+            "    {\n"
+            '      "framework": "Framework name (e.g. LangGraph, CrewAI, LangChain)",\n'
+            '      "file_path": "Path to file",\n'
+            '      "version": "Version if detected, or \\"latest\\"",\n'
+            '      "purpose": "Purpose of the framework",\n'
+            '      "confidence_score": 90\n'
+            "    }\n"
+            "  ],\n"
+            '  "prompts": [\n'
+            "    {\n"
+            '      "prompt_name": "Name/variable of prompt",\n'
+            '      "file_path": "Path to file",\n'
+            '      "prompt_type": "e.g. System Instruction, User Prompt",\n'
+            '      "prompt_complexity": "Low | Medium | High",\n'
+            '      "purpose": "What this prompt instructs the LLM to do"\n'
+            "    }\n"
+            "  ],\n"
+            '  "capabilities": {\n'
+            '    "GenAI": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
+            '    "RAG": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
+            '    "Agentic": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
+            '    "Multi-Model": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
+            '    "Computer Vision": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
+            '    "Speech AI": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
+            '    "Multimodal": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" }\n'
+            "  },\n"
+            '  "rag_maturity": {\n'
+            '    "maturity": "Low | Basic | Intermediate | Mature",\n'
+            '    "score": 0-100,\n'
+            '    "evidence": ["e.g. SemanticChunker import detected"],\n'
+            '    "weaknesses": ["e.g. SQLite database for dense vectors"],\n'
+            '    "recommendations": ["e.g. Migrate to specialized vector DB"]\n'
+            "  },\n"
+            '  "agentic_maturity": {\n'
+            '    "maturity": "Basic | Intermediate | Advanced Agentic AI",\n'
+            '    "score": 0-100,\n'
+            '    "evidence": ["e.g. StateGraph instantiated"],\n'
+            '    "weaknesses": ["e.g. Short-term volatile session memory utilized"],\n'
+            '    "recommendations": ["e.g. Implement stateful checkpoint persistence"]\n'
+            "  },\n"
+            '  "qa_suggestions": {\n'
+            '    "test_coverage_estimate": 45,\n'
+            '    "recommendations": ["List of suggested QA improvements"],\n'
+            '    "suggested_tests": [\n'
+            "      {\n"
+            '        "test_name": "Test case name",\n'
+            '        "file_path": "File to test",\n'
+            '        "description": "What this test should validate",\n'
+            '        "mock_code": "PyTest/Playwright mock code snippet"\n'
+            "      }\n"
+            "    ]\n"
+            "  },\n"
+            '  "pentest_findings": [\n'
+            "    {\n"
+            '      "id": "finding_1",\n'
+            '      "title": "Vulnerability Title",\n'
+            '      "severity": "Critical | High | Medium | Low",\n'
+            '      "file": "File path",\n'
+            '      "line": 42,\n'
+            '      "why": "Explanation of vulnerability in code context",\n'
+            '      "impact": "Security impact of vulnerability",\n'
+            '      "remediation": "Remediation code snippet"\n'
+            "    }\n"
+            "  ],\n"
+            '  "governance_report": {\n'
+            '    "risk_score": 0-100,\n'
+            '    "eu_ai_act_classification": "Minimal Risk | Limited Risk | High Risk | Prohibited",\n'
+            '    "eu_ai_act_explanation": "Detailed explanation of risk classification",\n'
+            '    "license_compliance": "MIT / Apache-2.0 / Custom / Proprietary",\n'
+            '    "license_compatibility": "Compatible | Incompatible",\n'
+            '    "data_privacy_issues": ["List of issues (e.g. credentials leakage risk)"],\n'
+            '    "regulatory_recommendations": ["List of steps (e.g. strip emails from logs)"]\n'
+            "  }\n"
+            "}\n\n"
+            "You must ensure the analysis is fully grounded in the actual codebase provided. Do not invent files, imports, or APIs that do not exist."
+        )
+
+        readme_content = ""
+        for path, content in file_contents.items():
+            if os.path.basename(path).lower() == 'readme.md':
+                readme_content = content[:8000]
+                break
+
+        if not readme_content:
+            for path in file_contents:
+                if 'readme' in path.lower():
+                    readme_content = file_contents[path][:8000]
+                    break
+
+        structure_lines = []
+        for path in all_files[:100]:
+            structure_lines.append(path)
+
+        user_message = (
+            f"Repository Name: {self.repo_name}\n"
+            f"Languages Detected: {', '.join([x.capitalize() for x in langs if x])}\n"
+            f"Tech Stack: {json.dumps(tech_stack)}\n"
+            f"Detected Architecture Pattern: {arch_type}\n"
+            f"Calculated Scores:\n"
+            f"  - Overall Score: {overall_score}/100\n"
+            f"  - Architecture Score: {arch_score}/100\n"
+            f"  - Security Score: {sec_score}/100\n"
+            f"  - Maintainability Score: {maint_score}/100\n"
+            f"  - Performance Score: {perf_score}/100\n"
+            f"  - Testing Score: {test_score}/100\n\n"
+            f"Project Structure (partial file listing):\n" + "\n".join(structure_lines) + "\n\n"
+        )
+
+        if readme_content:
+            user_message += f"README.md / Documentation Content:\n{readme_content}\n\n"
+
+        # Scan for AI files to append content for LLM context
+        ai_file_contexts = []
+        for path, content in file_contents.items():
+            content_lower = content.lower()
+            if any(term in content_lower for term in ["gemini", "openai", "langgraph", "crewai", "pydantic_ai", "chromadb", "faiss", "vectorstore", "embedding", "llm"]):
+                ai_file_contexts.append(f"--- File: {path} ---\n{content[:3000]}\n")
+                if len(ai_file_contexts) >= 5:
+                    break
+        
+        if ai_file_contexts:
+            user_message += "\nSource Code Context (AI/ML & Core Modules):\n" + "\n".join(ai_file_contexts) + "\n"
+
+        if sast_findings or secrets or code_review_issues:
+            user_message += "Detected Heuristic/SAST Issues:\n"
+            for f in sast_findings[:5]:
+                user_message += f"- Security Issue ({f.get('severity')}): {f.get('title')} in {f.get('file')}. Reason: {f.get('why') or f.get('description') or ''}\n"
+            for f in code_review_issues[:5]:
+                user_message += f"- Code Quality Issue ({f.get('severity')}): {f.get('title')} in {f.get('file')}. Reason: {f.get('why') or f.get('description') or ''}\n"
+            for s in secrets[:5]:
+                user_message += f"- Hardcoded Secret ({s.get('severity')}): {s.get('type')} in {s.get('file')}\n"
+
+        llm_findings = None
+        summary_text = ""
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            raw_response = ""
+            if loop and loop.is_running():
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor() as executor:
+                    future = executor.submit(lambda: asyncio.run(call_ai(system_prompt, user_message)))
+                    raw_response = future.result()
+            else:
+                raw_response = asyncio.run(call_ai(system_prompt, user_message))
+                
+            llm_findings = clean_and_parse_json(raw_response)
+            summary_text = (
+                f"### Repository Overview\n\n{llm_findings.get('executive_summary', 'No summary provided.')}\n\n"
+                f"### Architectural Assessment\n\n{llm_findings.get('architectural_assessment', 'No assessment provided.')}"
+            )
+        except Exception as e:
+            print(f"[RepoIntelligence] AI Call failed or returned invalid JSON: {e}. Using rule-based fallback summary.")
+            summary_text = (
+                "### Repository Overview\n\n"
+                f"The {self.repo_name} repository implements a software solution built primarily using "
+                f"{', '.join(tech_stack['Frontend'] + tech_stack['Backend']) if (tech_stack['Frontend'] or tech_stack['Backend']) else 'standard scripts'}. "
+                f"Its core capability centers around repository intelligence, static analysis, security modeling, and QA automation workflows. "
+                "The codebase is intended for software developers, security analysts, and quality engineers looking to automate audits.\n\n"
+                "### Architectural Assessment\n\n"
+                f"The project utilizes a {arch_type} pattern. It defines distinct boundary modules for backend services, "
+                "frontend user interfaces, security scanners, and QA simulation routines. "
+                "Separation of concerns is maintained through dedicated folders like core, routes, and services, enabling moderate scalability.\n\n"
+                f"Architecture Score: {arch_score}/100\n\n"
+                "### Security & Code Quality Assessment\n\n"
+                f"Core functionalities leverage heuristic checks and rule-based pipelines. "
+                f"While dependencies are defined in standard configurations, code quality is evaluated at a score of {maint_score}/100. "
+                f"Strengths include encapsulated helper files, while primary vulnerabilities revolve around input validation and the configuration of static models.\n\n"
+                f"Security & Quality Score: {sec_score}/100\n\n"
+                "### Executive Recommendation\n\n"
+                "The repository is structured well for a prototype or development environment. "
+                "To achieve production readiness, the top priorities must focus on increasing automated test coverage, "
+                "implementing dynamic input validation layers, and refining coupling between core analytical engines."
+            )
+
+        # Merge LLM pentest findings to heuristic findings
+        if llm_findings and "pentest_findings" in llm_findings:
+            for f in llm_findings["pentest_findings"]:
+                if not any(x.get("file") == f.get("file") and x.get("title") == f.get("title") for x in sast_findings):
+                    sast_findings.append({
+                        "title": f.get("title"),
+                        "severity": f.get("severity"),
+                        "file": f.get("file"),
+                        "line": f.get("line", 1),
+                        "category": "Security",
+                        "why": f.get("why"),
+                        "impact": f.get("impact"),
+                        "fix": f.get("remediation"),
+                        "owner": self.determine_owner_team("Security", f.get("file", ""))
+                    })
+            # Recompute scores based on real findings
+            sec_score = min(100, max(10, 95 - (len(secrets) * 25) - (len(sast_findings) * 10)))
+            overall_score = min(90, max(40, 70 + (coverage // 5) - (len(secrets) * 15) - (len(sast_findings) * 5) - (duplicate_percentage // 2)))
+
         recs = []
         if secrets:
             recs.append(self.smart_engine.generate_recommendation({
@@ -396,7 +667,12 @@ class RepoIntelligence:
                 insight['owner'] = self.determine_owner_team(insight.get('category', 'Architecture'), insight.get('file_path', insight.get('file', '')))
                 insight['issue'] = insight.get('issue', insight.get('title', 'Refactoring opportunity'))
                 recs.append(self.smart_engine.generate_recommendation(insight, tech_stack))
-        
+
+        if llm_findings and "qa_suggestions" in llm_findings:
+            for r in llm_findings["qa_suggestions"].get("recommendations", []):
+                if r not in recs:
+                    recs.append(r)
+
         scan_id = uuid.uuid4().hex
         
         # Fingerprint Generation
@@ -419,6 +695,23 @@ class RepoIntelligence:
         # 6. Generate Pentest Intelligence
         update_progress(95, "Generating Attack Paths & Pentest Reports...")
         pentest_platform = self.pentest_engine.generate_pentest_intelligence(repo_id, tech_stack, all_files)
+        if llm_findings and "pentest_findings" in llm_findings:
+            custom_findings = llm_findings["pentest_findings"]
+            for f in custom_findings:
+                if "id" not in f: f["id"] = uuid.uuid4().hex
+                if "impact" not in f: f["impact"] = "Potential breach or data exposure."
+                # Append if not already present in pentest_platform findings
+                if not any(x.get("file") == f.get("file") and x.get("title") == f.get("title") for x in pentest_platform["findings"]):
+                    pentest_platform["findings"].append(f)
+            crit = len([x for x in pentest_platform["findings"] if x.get("severity") == "Critical"])
+            high = len([x for x in pentest_platform["findings"] if x.get("severity") == "High"])
+            med = len([x for x in pentest_platform["findings"] if x.get("severity") == "Medium"])
+            low = len([x for x in pentest_platform["findings"] if x.get("severity") == "Low"])
+            pentest_platform["overview"]["total_findings"] = len(pentest_platform["findings"])
+            pentest_platform["overview"]["critical"] = crit
+            pentest_platform["overview"]["high"] = high
+            pentest_platform["overview"]["medium"] = med
+            pentest_platform["overview"]["low"] = low
 
         update_progress(100, "Finalizing Enterprise Intelligence Report...")
 
@@ -474,7 +767,13 @@ class RepoIntelligence:
             import logging
             logging.error(f"Failed to generate HITL findings: {e}")
 
+        # AI Architecture & Model Discovery Engine
+        from services.model_discovery import ModelDiscoveryEngine
+        discovery_engine = ModelDiscoveryEngine()
+        ai_intel_report = discovery_engine.discover_ai_components(file_contents, llm_override=llm_findings)
+
         return {
+            "ai_intelligence": ai_intel_report,
             "repository_overview": {
                     "name": self.repo_name, "owner": self.owner, "branch": self.branch, "files": files_cnt, "folders": folders_cnt,
                     "languages": [x.capitalize() for x in langs if x], "tech_stack": tech_stack, "last_updated": self.last_updated,
@@ -492,7 +791,7 @@ class RepoIntelligence:
                     "modularity": arch_score - 5, "scalability": min(100, arch_score + 5), "security": sec_score, "testing": test_score, "performance": perf_score,
                     "risk_exposure": "High" if secrets or sec_score < 50 else "Medium" if sec_score < 80 else "Low"
                 },
-                "summary": {"text": f"This repository contains {files_cnt} files across {folders_cnt} directories, built primarily using {', '.join(tech_stack['Frontend'] + tech_stack['Backend']) if (tech_stack['Frontend'] or tech_stack['Backend']) else 'standard scripts'}. The detected {arch_type} pattern achieved an architecture score of {arch_score}/100. Using dynamic vector retrieval across {chunks_embedded} parsed source chunks, we generated highly contextual recommendations tailored exactly to this codebase's structure."},
+                "summary": {"text": summary_text},
             "architecture": {
                 "type": arch_type, "score": arch_score, "folder_quality": "Excellent" if folders_cnt > 3 and arch_score > 70 else "Needs Improvement", "service_boundaries": "Clear" if arch_type != "Monolith" else "Moderate", "coupling_score": "Low" if arch_score > 80 else "High",
                 "explanation": f"The repository is structured as a {arch_type}. {'This offers excellent separation of concerns.' if arch_score > 80 else 'However, tight coupling was detected between internal directories.'}",
@@ -542,7 +841,7 @@ class RepoIntelligence:
                 "secrets": secrets 
             },
             "code_review_platform": self._generate_deterministic_code_review(sast_findings, code_review_issues, all_files),
-            "qa_platform": self.qa_engine.generate_qa_intelligence(repo_id, files_cnt, test_files, all_files, file_contents, tech_stack, coverage),
+            "qa_platform": self.qa_engine.generate_qa_intelligence(repo_id, files_cnt, test_files, all_files, file_contents, tech_stack, coverage, llm_override=llm_findings),
             "pentest_platform": pentest_platform,
             "repo_memory": repo_memory,
             "timeline": [{"step": "Repository cloned via Git checkout", "status": "done"}, {"step": "Recursive static traversal completed", "status": "done"}, {"step": "Deep file topology extracted", "status": "done"}, {"step": "Knowledge Base vectorized and mapped", "status": "done"}, {"step": "Smart findings mapped to ownership teams", "status": "done"}]

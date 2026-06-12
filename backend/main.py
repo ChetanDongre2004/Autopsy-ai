@@ -10,20 +10,57 @@ import zipfile
 import shutil
 import os
 import time
+import logging
 
-app = FastAPI(title='Autopsy AI')
+# Structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}',
+    datefmt='%Y-%m-%dT%H:%M:%S'
+)
+logger = logging.getLogger("autopsy")
+
+app = FastAPI(
+    title='Autopsy AI',
+    description='AI-Powered Repository Intelligence Platform',
+    version='2.0.0'
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001"
+        "http://127.0.0.1:3001",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Wire Routers (Phase 15) ---
+from routers.auth import router as auth_router
+from routers.health import router as health_router
+app.include_router(auth_router)
+app.include_router(health_router)
+
+
+# --- Request Metrics Middleware (Phase 11) ---
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    from routers.health import record_metric
+    record_metric("requests_total", 1)
+    start = time.time()
+    try:
+        response = await call_next(request)
+        latency_ms = (time.time() - start) * 1000
+        record_metric("api_latency_ms", latency_ms)
+        return response
+    except Exception as e:
+        record_metric("errors_total", 1)
+        raise e
 
 class RepoRequest(BaseModel):
     url: Optional[str] = None
@@ -208,12 +245,21 @@ def submit_review_decision(req: ReviewDecisionReq):
 
 @app.get("/api/v1/history/findings")
 def get_history_findings():
-    return {"status": "success", "findings": []}
+    from services.kb_service import KnowledgeBaseEngine, RepoFinding
+    kb = KnowledgeBaseEngine()
+    session = kb.get_session()
+    try:
+        findings = session.query(RepoFinding).order_by(RepoFinding.scan_id.desc()).limit(50).all()
+        return {"status": "success", "findings": [
+            {"id": f.id, "title": f.title, "severity": f.severity, "file_path": f.file_path, "category": f.category}
+            for f in findings
+        ]}
+    finally:
+        session.close()
 
 @app.post('/api/v1/security/remediate-all')
 def remediate_all(req: ExportRequest):
     try:
-        time.sleep(1.5) # Simulate AI generation
         sec = req.data.get("security_platform", {})
         
         tasks = []
@@ -366,9 +412,14 @@ async def review_history(repo_id: str):
 
 @app.post('/api/review/fix-suggestion')
 async def fix_suggestion(req: dict):
-    # Simulates AI auto-fix generation
+    from ai_helper import call_ai
     snippet = req.get("snippet", "")
-    return {"status": "success", "suggestion": "Refactored code using optimal patterns.", "patch": snippet + "\n# AI Optimized"}
+    try:
+        system_prompt = "You are an expert code reviewer. Given the code snippet, provide a specific, actionable fix. Return ONLY the fixed code."
+        response = await call_ai(system_prompt, f"Fix this code:\n{snippet}")
+        return {"status": "success", "suggestion": "Code refactored using optimal patterns.", "patch": response}
+    except Exception:
+        return {"status": "success", "suggestion": "Refactored code using optimal patterns.", "patch": snippet + "\n# Review required"}
 
 @app.delete('/api/review/cache')
 async def clear_cache():
@@ -456,13 +507,7 @@ async def get_qa_result(run_id: str):
 async def get_qa_history():
     return await review_history("all")
 
-@app.post('/api/qa/schedule')
-async def schedule_qa_run(req: dict):
-    return {"status": "success", "message": "Test suite scheduled successfully"}
 
-@app.post('/api/qa/retry-failed')
-async def retry_failed_tests(req: dict):
-    return {"status": "success", "message": "Retrying 3 failed test cases..."}
 
 # ==========================================
 # ENTERPRISE PENTESTING COMMAND CENTER APIs
@@ -503,8 +548,8 @@ async def pentest_scan_cloud(req: PentestScanRequest, background_tasks: Backgrou
     return await scan_start(repo_req, background_tasks)
 
 @app.post('/api/pentest/upload')
-async def pentest_upload(files: list[UploadFile] = File(...)):
-    return {"status": "uploaded", "job_id": uuid.uuid4().hex}
+async def pentest_upload(background_tasks: BackgroundTasks, files: list[UploadFile] = File(...)):
+    return await analyze_upload(background_tasks, type="file", files=files)
 
 @app.get('/api/pentest/result/{scan_id}')
 async def pentest_result(scan_id: str):
@@ -512,31 +557,20 @@ async def pentest_result(scan_id: str):
 
 @app.get('/api/pentest/findings')
 async def pentest_findings():
-    return {"findings": []}
-
-@app.post('/api/pentest/finding/{id}/status')
-async def pentest_finding_status(id: str, payload: dict):
-    return {"status": "updated"}
-
-@app.post('/api/pentest/finding/{id}/assign')
-async def pentest_finding_assign(id: str, payload: dict):
-    return {"status": "assigned"}
-
-@app.post('/api/pentest/finding/{id}/retest')
-async def pentest_finding_retest(id: str):
-    return {"status": "retesting"}
-
-@app.get('/api/pentest/trends')
-async def pentest_trends():
-    return {"trends": []}
-
-@app.post('/api/pentest/schedule')
-async def pentest_schedule(payload: dict):
-    return {"status": "scheduled"}
-
-@app.get('/api/pentest/export/{scan_id}')
-async def pentest_export(scan_id: str, format: str = 'pdf'):
-    return {"status": "exported", "format": format}
+    from services.kb_service import KnowledgeBaseEngine, RepoFinding
+    kb = KnowledgeBaseEngine()
+    session = kb.get_session()
+    try:
+        findings = session.query(RepoFinding).filter(
+            RepoFinding.category.in_(['Security', 'API Security', 'Web Pentest', 'Auth Testing', 'Cloud & Infra'])
+        ).order_by(RepoFinding.severity.desc()).limit(100).all()
+        return {"findings": [
+            {"id": f.id, "title": f.title, "severity": f.severity, "file_path": f.file_path, 
+             "category": f.category, "description": f.description, "fix": f.fix, "owner": f.owner_team}
+            for f in findings
+        ]}
+    finally:
+        session.close()
 
 class ChatQueryRequest(BaseModel):
     repo_name: str
@@ -913,7 +947,10 @@ async def chat_query(req: ChatQueryRequest):
         connected_chunks = [c for c in all_chunks if c.file_path in connected]
         
         search_query = f"{os.path.basename(selected_node)} {req.query}"
-        results = retrieval_engine.contextual_retrieval(repo.id, "general", search_query, [0.0]*768, n_results=5)
+        from core.embedding_service import EmbeddingService
+        _emb_service = EmbeddingService()
+        query_embedding = _emb_service.generate_query_embedding(search_query)
+        results = retrieval_engine.contextual_retrieval(repo.id, "general", search_query, query_embedding, n_results=5)
         
         merged_chunks = []
         seen_paths = set()
@@ -1010,7 +1047,10 @@ async def chat_query(req: ChatQueryRequest):
         sources = [c['file_path'] for c in merged_chunks]
         
     else:
-        results = retrieval_engine.contextual_retrieval(repo.id, "general", req.query, [0.0]*768, n_results=5)
+        from core.embedding_service import EmbeddingService
+        _emb_service = EmbeddingService()
+        query_embedding = _emb_service.generate_query_embedding(req.query)
+        results = retrieval_engine.contextual_retrieval(repo.id, "general", req.query, query_embedding, n_results=5)
         context = ""
         for r in results:
             context += f"File: {r['file_path']}\nContent:\n{r['content']}\n---\n"

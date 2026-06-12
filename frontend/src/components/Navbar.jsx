@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Rocket, ChevronDown, ShieldAlert, Code2, HeartPulse, Target, UserCircle, FileText, Blocks, Zap, Menu, X, Cpu } from "lucide-react";
+import { Rocket, ChevronDown, ShieldAlert, Code2, Target, Blocks, Zap, Menu, X, Cpu } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Navbar() {
@@ -11,11 +11,8 @@ export default function Navbar() {
     { name: "GitHub Repository Intelligence", path: "/products/github", icon: <Blocks className="w-5 h-5 text-blue-400"/>, desc: "Analyze architecture, health, and onboarding." },
     { name: "Security Intelligence Platform", path: "/products/security", icon: <ShieldAlert className="w-5 h-5 text-red-400"/>, desc: "Detect vulnerabilities, secrets, and CVEs." },
     { name: "AI Code Review Platform", path: "/products/review", icon: <Code2 className="w-5 h-5 text-indigo-400"/>, desc: "Senior-level multi-language code review." },
-    { name: "Code Quality Platform", path: "/products/quality", icon: <HeartPulse className="w-5 h-5 text-green-400"/>, desc: "Maintainability, duplication, and complexity." },
     { name: "QA Automation Platform", path: "/products/qa", icon: <Zap className="w-5 h-5 text-amber-400"/>, desc: "Auto-generate tests and edge cases." },
     { name: "Pentesting Platform", path: "/products/pentest", icon: <Target className="w-5 h-5 text-orange-400"/>, desc: "API hitting, fuzzing, and auth abuse." },
-    { name: "Developer 360", path: "/products/developer360", icon: <UserCircle className="w-5 h-5 text-cyan-400"/>, desc: "Ownership, hotspots, and team analytics." },
-    { name: "Reports Center", path: "/products/reports", icon: <FileText className="w-5 h-5 text-zinc-400"/>, desc: "Export PDFs, JSON trends, and compliance." },
     { name: "AMD AI Acceleration Hub", path: "/products/amd-ai-hub", icon: <Cpu className="w-5 h-5 text-orange-400"/>, desc: "Local RAG Code Chat & Telemetry benchmarks." },
   ];
 
@@ -62,9 +59,7 @@ export default function Navbar() {
             </AnimatePresence>
           </div>
 
-          <Link to="/resources" className="hover:text-indigo-400 transition flex items-center gap-1.5">Resources <ChevronDown className="w-4 h-4"/></Link>
-          <Link to="/pricing" className="hover:text-indigo-400 transition">Pricing</Link>
-          <Link to="/docs" className="hover:text-indigo-400 transition">Docs</Link>
+
         </div>
 
         <div className="hidden lg:flex items-center gap-4">

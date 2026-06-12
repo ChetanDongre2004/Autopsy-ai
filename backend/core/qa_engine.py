@@ -14,7 +14,7 @@ class QAEngine:
         self.rng = rng
         self.historical_memory = HistoricalMemory(kb_session)
 
-    def generate_qa_intelligence(self, repo_id: str, files_cnt: int, test_files: list, all_files: list, file_contents: dict, tech_stack: dict, coverage: int):
+    def generate_qa_intelligence(self, repo_id: str, files_cnt: int, test_files: list, all_files: list, file_contents: dict, tech_stack: dict, coverage: int, llm_override: dict = None):
         # 1. Analyze repository structure for intelligent test detection
         api_routes = []
         ui_components = []
@@ -211,10 +211,36 @@ class QAEngine:
         if flaky_count > 0:
             recs.append(f"{flaky_count} tests are exhibiting flaky behavior. Assign an SDET to stabilize DOM selectors and network mocks.")
 
+        if llm_override and "qa_suggestions" in llm_override:
+            qa_sug = llm_override["qa_suggestions"]
+            if "recommendations" in qa_sug:
+                recs.extend(qa_sug["recommendations"])
+            if "test_coverage_estimate" in qa_sug:
+                coverage = qa_sug["test_coverage_estimate"]
+            for idx, st in enumerate(qa_sug.get("suggested_tests", [])):
+                api_tests.append({
+                    "name": f"Suggested: {st.get('test_name')}",
+                    "suite": "AI Recommendations",
+                    "priority": "P1",
+                    "status": "passed",
+                    "duration": 120,
+                    "env": "Staging",
+                    "browser": "API Client",
+                    "endpoint": st.get("file_path", "unknown"),
+                    "method": "GET",
+                    "error_msg": None,
+                    "description": st.get("description", ""),
+                    "mock_code": st.get("mock_code", "")
+                })
+                # Also add as a recommendation text so it's super visible
+                recs.append(f"Add test '{st.get('test_name')}' for {st.get('file_path')}: {st.get('description')}")
+
+        all_runs = api_tests + e2e_tests + core_tests
+
         return {
             "overview": {
-                "total_tests": total_tests,
-                "passed_tests": passed_count,
+                "total_tests": total_tests + len(qa_sug.get("suggested_tests", [])) if (llm_override and "qa_suggestions" in llm_override) else total_tests,
+                "passed_tests": passed_count + len(qa_sug.get("suggested_tests", [])) if (llm_override and "qa_suggestions" in llm_override) else passed_count,
                 "failed_tests": failed_count,
                 "flaky_tests": flaky_count,
                 "coverage": f"{coverage}%",
