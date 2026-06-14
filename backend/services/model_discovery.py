@@ -155,7 +155,7 @@ class ModelDiscoveryEngine:
 
         # Merge LLM override data (from AI analysis) if richer
         if llm_override:
-            self._merge_llm_override(llm_override, models, embeddings, vector_dbs, frameworks, prompts)
+            self._merge_llm_override(llm_override, models, embeddings, vector_dbs, frameworks, prompts, file_contents)
 
         # Capabilities detection
         if models:
@@ -229,36 +229,120 @@ class ModelDiscoveryEngine:
             return "System-level LLM instruction and constraints"
         return "User-facing query construction and context injection"
 
-    def _merge_llm_override(self, llm_override, models, embeddings, vector_dbs, frameworks, prompts):
+    def _merge_llm_override(self, llm_override, models, embeddings, vector_dbs, frameworks, prompts, file_contents: Dict[str, str] = None):
         for m in llm_override.get("models", []):
-            if m.get("model_name") and not any(x["model_name"] == m["model_name"] for x in models):
+            fp = m.get("file_path", "")
+            if not fp:
+                continue
+            matching_file = None
+            if file_contents:
+                for actual_path in file_contents.keys():
+                    actual_norm = actual_path.replace("\\", "/").lower()
+                    fp_norm = fp.replace("\\", "/").lower()
+                    if fp_norm in actual_norm or actual_norm in fp_norm:
+                        matching_file = actual_path
+                        break
+            if not matching_file:
+                continue
+
+            content = file_contents[matching_file].lower()
+            model_name_clean = m.get("model_name", "").lower()
+            full_name_clean = m.get("full_name", "").lower()
+            is_config = any(x in matching_file.lower() for x in ["package.json", "requirements.txt", "pyproject.toml", "poetry.lock", "setup.py", "dockerfile"])
+            if not is_config and model_name_clean not in content and full_name_clean not in content:
+                continue
+
+            if not any(x["model_name"] == m["model_name"] for x in models):
                 models.append({
                     "model_name": m.get("model_name", ""), "full_name": m.get("full_name", m.get("model_name", "")),
-                    "provider": m.get("provider", "Unknown"), "file_path": m.get("file_path", ""),
+                    "provider": m.get("provider", "Unknown"), "file_path": matching_file,
                     "purpose": m.get("purpose", ""), "input_type": m.get("input_type", "Text"),
                     "output_type": m.get("output_type", "Text"),
-                    "evidence": f"Detected by AI analysis", "confidence_score": m.get("confidence_score", 80)
+                    "evidence": "Detected by AI analysis with verified code trace", "confidence_score": m.get("confidence_score", 80)
                 })
+
         for e in llm_override.get("embeddings", []):
-            if e.get("embedding_model") and not any(x["embedding_model"] == e["embedding_model"] for x in embeddings):
+            fp = e.get("file_path", "")
+            if not fp:
+                continue
+            matching_file = None
+            if file_contents:
+                for actual_path in file_contents.keys():
+                    actual_norm = actual_path.replace("\\", "/").lower()
+                    fp_norm = fp.replace("\\", "/").lower()
+                    if fp_norm in actual_norm or actual_norm in fp_norm:
+                        matching_file = actual_path
+                        break
+            if not matching_file:
+                continue
+
+            content = file_contents[matching_file].lower()
+            emb_model_clean = e.get("embedding_model", "").lower()
+            is_config = any(x in matching_file.lower() for x in ["package.json", "requirements.txt", "pyproject.toml", "poetry.lock", "setup.py", "dockerfile"])
+            if not is_config and emb_model_clean not in content:
+                continue
+
+            if not any(x["embedding_model"] == e["embedding_model"] for x in embeddings):
                 embeddings.append({
                     "embedding_model": e.get("embedding_model", ""), "provider": e.get("provider", ""),
-                    "file_path": e.get("file_path", ""), "purpose": e.get("purpose", ""),
-                    "evidence": "Detected by AI analysis", "confidence_score": e.get("confidence_score", 80)
+                    "file_path": matching_file, "purpose": e.get("purpose", ""),
+                    "evidence": "Detected by AI analysis with verified code trace", "confidence_score": e.get("confidence_score", 80)
                 })
+
         for v in llm_override.get("vector_dbs", []):
-            if v.get("vector_db") and not any(x["vector_db"] == v["vector_db"] for x in vector_dbs):
+            fp = v.get("file_path", "")
+            if not fp:
+                continue
+            matching_file = None
+            if file_contents:
+                for actual_path in file_contents.keys():
+                    actual_norm = actual_path.replace("\\", "/").lower()
+                    fp_norm = fp.replace("\\", "/").lower()
+                    if fp_norm in actual_norm or actual_norm in fp_norm:
+                        matching_file = actual_path
+                        break
+            if not matching_file:
+                continue
+
+            content = file_contents[matching_file].lower()
+            vdb_clean = v.get("vector_db", "").lower()
+            is_config = any(x in matching_file.lower() for x in ["package.json", "requirements.txt", "pyproject.toml", "poetry.lock", "setup.py", "dockerfile"])
+            if not is_config and vdb_clean not in content:
+                continue
+
+            if not any(x["vector_db"] == v["vector_db"] for x in vector_dbs):
                 vector_dbs.append({
-                    "vector_db": v.get("vector_db", ""), "file_path": v.get("file_path", ""),
-                    "purpose": v.get("purpose", ""), "evidence": "Detected by AI analysis",
+                    "vector_db": v.get("vector_db", ""), "file_path": matching_file,
+                    "purpose": v.get("purpose", ""), "evidence": "Detected by AI analysis with verified code trace",
                     "confidence_score": v.get("confidence_score", 80)
                 })
+
         for f in llm_override.get("frameworks", []):
-            if f.get("framework") and not any(x["framework"] == f["framework"] for x in frameworks):
+            fp = f.get("file_path", "")
+            if not fp:
+                continue
+            matching_file = None
+            if file_contents:
+                for actual_path in file_contents.keys():
+                    actual_norm = actual_path.replace("\\", "/").lower()
+                    fp_norm = fp.replace("\\", "/").lower()
+                    if fp_norm in actual_norm or actual_norm in fp_norm:
+                        matching_file = actual_path
+                        break
+            if not matching_file:
+                continue
+
+            content = file_contents[matching_file].lower()
+            fw_clean = f.get("framework", "").lower()
+            is_config = any(x in matching_file.lower() for x in ["package.json", "requirements.txt", "pyproject.toml", "poetry.lock", "setup.py", "dockerfile"])
+            if not is_config and fw_clean not in content:
+                continue
+
+            if not any(x["framework"] == f["framework"] for x in frameworks):
                 frameworks.append({
-                    "framework": f.get("framework", ""), "file_path": f.get("file_path", ""),
+                    "framework": f.get("framework", ""), "file_path": matching_file,
                     "version": f.get("version", "latest"), "purpose": f.get("purpose", ""),
-                    "evidence": "Detected by AI analysis", "confidence_score": f.get("confidence_score", 80)
+                    "evidence": "Detected by AI analysis with verified code trace", "confidence_score": f.get("confidence_score", 80)
                 })
 
     def _build_graph(self, models, embeddings, vector_dbs, frameworks, prompts):
@@ -293,6 +377,12 @@ class ModelDiscoveryEngine:
         score = 0
         evidence, weaknesses, recommendations = [], [], []
         has_rag = bool(embeddings and vector_dbs)
+        if not has_rag:
+            return {"rag_intelligence": {
+                "has_rag": False, "maturity": "N/A", "maturity_score": 0,
+                "vector_store": "None", "embedding_model": "None",
+                "evidence": [], "weaknesses": ["No RAG components detected in repository."], "recommendations": []
+            }}
         if embeddings:
             score += 30
             evidence.append(f"Embedding model detected: {embeddings[0]['embedding_model']}")
@@ -319,9 +409,14 @@ class ModelDiscoveryEngine:
         score = 0
         evidence, weaknesses, recommendations = [], [], []
         agentic_fws = [f for f in frameworks if f["framework"] in ["LangGraph", "CrewAI", "AutoGen"]]
-        if agentic_fws:
-            score += 50
-            evidence.append(f"{agentic_fws[0]['framework']} detected in {agentic_fws[0]['file_path']}")
+        if not agentic_fws:
+            return {
+                "has_agentic": False, "maturity": "N/A", "maturity_score": 0,
+                "evidence": [], "weaknesses": ["No agentic workflows detected in repository."], "recommendations": [],
+                "tools": [], "planning": "N/A", "memory": "N/A"
+            }
+        score += 50
+        evidence.append(f"{agentic_fws[0]['framework']} detected in {agentic_fws[0]['file_path']}")
         if len(models) > 1:
             score += 20
             evidence.append(f"Multi-model setup: {len(models)} models.")
@@ -337,6 +432,8 @@ class ModelDiscoveryEngine:
         }
 
     def _compute_arch_score(self, models, embeddings, vector_dbs, frameworks):
+        if not models and not embeddings and not vector_dbs and not frameworks:
+            return 0
         score = 50
         if models: score += 15
         if embeddings: score += 10
