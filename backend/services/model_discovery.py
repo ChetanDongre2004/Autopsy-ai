@@ -82,6 +82,10 @@ class ModelDiscoveryEngine:
         for file_path, content in file_contents.items():
             if not content:
                 continue
+            # Skip self-detection patterns in engine and analyzer code to avoid false positives
+            fp_lower = file_path.lower()
+            if "model_discovery.py" in fp_lower or "analyzer.py" in fp_lower:
+                continue
             c_lower = content.lower()
 
             # Models

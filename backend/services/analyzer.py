@@ -689,9 +689,38 @@ class RepoIntelligence:
 
         # Setup prompt
         system_prompt = (
-            "You are Autopsy AI - AMD Enterprise AI Repository Intelligence & Evaluation Engine.\n"
-            "Your task is to analyze the provided repository context (code snippets, file structure, readme, tech stack, and heuristic findings) and return a highly detailed, comprehensive intelligence report.\n"
-            "You MUST return ONLY a valid JSON object. Do not include markdown code block formatting (such as ```json) or any introductory or concluding text.\n\n"
+            "You are a Repository Intelligence Engine.\n"
+            "Your job is to analyze a repository exactly as a senior engineer would.\n"
+            "You must NEVER generate hardcoded outputs, static results, predefined model lists, fake architecture classifications, estimated scores, placeholder insights, demo data, or guessed capabilities.\n\n"
+            "==================================================\n"
+            "CORE RULE\n"
+            "=========\n"
+            "Every output must be derived ONLY from the repository being scanned.\n"
+            "Different repositories must produce different outputs.\n"
+            "The result for Repository A must never be reused for Repository B.\n"
+            "No cached assumptions.\n"
+            "No predefined AI model inventories.\n"
+            "No hardcoded framework lists.\n"
+            "No fake architecture diagrams.\n"
+            "No generated capability badges.\n"
+            "No static metrics.\n\n"
+            "==================================================\n"
+            "REPOSITORY SCANNING & ANALYSIS\n"
+            "==============================\n"
+            "Inspect and analyze: Imports, Dependencies, Classes, Functions, Decorators, API Endpoints, Database Connections, Model Initializers, Embedding Models, Vector Stores, Agent Frameworks, Prompt Templates, Tool Calls, RAG Pipelines, Knowledge Bases, Web Scrapers, Security Modules, Repository Parsers.\n"
+            "Do not stop at filenames. Trace actual execution paths.\n\n"
+            "==================================================\n"
+            "TRUTH ENFORCEMENT\n"
+            "=================\n"
+            "Before generating any output, verify every claim against actual source code. Any feature without code evidence must be excluded from the final report.\n"
+            "If code proves a feature exists: Show it.\n"
+            "If code partially implements a feature: Mark it as partial.\n"
+            "If code does not prove a feature exists: Do not display it.\n"
+            "No assumptions. No hallucinations. No estimates. No hardcoded data. No fake AI analysis. No placeholder outputs. Only repository-backed evidence.\n\n"
+            "==================================================\n"
+            "RESPONSE FORMAT\n"
+            "===============\n"
+            "You MUST return ONLY a valid JSON object matching the RESPONSE SCHEMA below. Do not include markdown code block formatting (such as ```json) or any introductory or concluding text.\n\n"
             "RESPONSE SCHEMA:\n"
             "{\n"
             '  "executive_summary": "Provide a 3-5 sentence overview explaining what the application does, its primary purpose, and key capabilities.",\n'
@@ -799,8 +828,7 @@ class RepoIntelligence:
             '    "data_privacy_issues": ["List of issues (e.g. credentials leakage risk)"],\n'
             '    "regulatory_recommendations": ["List of steps (e.g. strip emails from logs)"]\n'
             "  }\n"
-            "}\n\n"
-            "You must ensure the analysis is fully grounded in the actual codebase provided. Do not invent files, imports, or APIs that do not exist."
+            "}"
         )
 
         readme_content = ""
