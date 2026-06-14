@@ -689,147 +689,106 @@ class RepoIntelligence:
 
         # Setup prompt
         system_prompt = (
-            "You are a Repository Intelligence Engine.\n"
-            "Your job is to analyze a repository exactly as a senior engineer would.\n"
-            "You must NEVER generate hardcoded outputs, static results, predefined model lists, fake architecture classifications, estimated scores, placeholder insights, demo data, or guessed capabilities.\n\n"
-            "==================================================\n"
-            "CORE RULE\n"
-            "=========\n"
-            "Every output must be derived ONLY from the repository being scanned.\n"
-            "Different repositories must produce different outputs.\n"
-            "The result for Repository A must never be reused for Repository B.\n"
-            "No cached assumptions.\n"
-            "No predefined AI model inventories.\n"
-            "No hardcoded framework lists.\n"
-            "No fake architecture diagrams.\n"
-            "No generated capability badges.\n"
-            "No static metrics.\n\n"
-            "==================================================\n"
-            "REPOSITORY SCANNING & ANALYSIS\n"
-            "==============================\n"
-            "Inspect and analyze: Imports, Dependencies, Classes, Functions, Decorators, API Endpoints, Database Connections, Model Initializers, Embedding Models, Vector Stores, Agent Frameworks, Prompt Templates, Tool Calls, RAG Pipelines, Knowledge Bases, Web Scrapers, Security Modules, Repository Parsers.\n"
-            "Do not stop at filenames. Trace actual execution paths.\n\n"
-            "==================================================\n"
-            "TRUTH ENFORCEMENT\n"
-            "=================\n"
-            "Before generating any output, verify every claim against actual source code. Any feature without code evidence must be excluded from the final report.\n"
-            "If code proves a feature exists: Show it.\n"
-            "If code partially implements a feature: Mark it as partial.\n"
-            "If code does not prove a feature exists: Do not display it.\n"
-            "No assumptions. No hallucinations. No estimates. No hardcoded data. No fake AI analysis. No placeholder outputs. Only repository-backed evidence.\n\n"
-            "==================================================\n"
-            "RESPONSE FORMAT\n"
-            "===============\n"
-            "You MUST return ONLY a valid JSON object matching the RESPONSE SCHEMA below. Do not include markdown code block formatting (such as ```json) or any introductory or concluding text.\n\n"
-            "RESPONSE SCHEMA:\n"
+            "You are a Repository Intelligence Engine — a senior software engineer performing a production-grade codebase audit.\n"
+            "You will be given: repository name, detected languages, tech stack, file structure, README content, and actual source code from the most important files.\n\n"
+            "ABSOLUTE RULES:\n"
+            "1. Base every statement ONLY on the source code provided — never on general knowledge or assumptions.\n"
+            "2. The executive_summary must describe WHAT THIS SPECIFIC REPOSITORY DOES, not AI in general.\n"
+            "3. If the repository is NOT an AI project: models=[], embeddings=[], vector_dbs=[], frameworks=[] and all capability detected=false.\n"
+            "4. Only list models/frameworks/vector_dbs/embeddings that appear verbatim in the provided source code.\n"
+            "5. pentest_findings must reference actual file paths from the provided structure — never invent file paths.\n"
+            "6. qa_suggestions must reference actual files from the provided structure.\n"
+            "7. You MUST return a valid JSON object. No markdown, no preamble, no trailing text.\n\n"
+            "RESPONSE SCHEMA (return ALL fields, use empty arrays/false for absent features):\n"
             "{\n"
-            '  "executive_summary": "Provide a 3-5 sentence overview explaining what the application does, its primary purpose, and key capabilities.",\n'
-            '  "architectural_assessment": "Analyze the codebase style, separation of concerns, strengths, weaknesses, and scalability potential.",\n'
+            '  "executive_summary": "3-5 sentences: what does THIS repository do, its purpose, key features based on code.",\n'
+            '  "architectural_assessment": "Describe architecture pattern, module structure, strengths, weaknesses based on provided files.",\n'
             '  "models": [\n'
             "    {\n"
-            '      "model_name": "Short name (e.g. Gemini 2.5 Pro)",\n'
-            '      "full_name": "Full identifier (e.g. google/gemini-2.5-pro)",\n'
-            '      "provider": "Provider name (e.g. Google)",\n'
-            '      "file_path": "Path to file declaring or utilizing the model",\n'
-            '      "purpose": "What this model is used for in the repository",\n'
-            '      "input_type": "e.g. Text, Image, Audio",\n'
-            '      "output_type": "e.g. Text, JSON, Embeddings",\n'
+            '      "model_name": "Short name e.g. gpt-4o",\n'
+            '      "full_name": "Full identifier",\n'
+            '      "provider": "Provider name",\n'
+            '      "file_path": "Exact path from provided file list",\n'
+            '      "purpose": "What this model does in this repo",\n'
+            '      "input_type": "Text|Image|Audio",\n'
+            '      "output_type": "Text|JSON|Embeddings",\n'
             '      "confidence_score": 90\n'
             "    }\n"
             "  ],\n"
             '  "embeddings": [\n'
             "    {\n"
-            '      "embedding_model": "Embedding model name",\n'
-            '      "provider": "Provider (e.g. OpenAI, HuggingFace)",\n'
-            '      "file_path": "Path to file",\n'
-            '      "purpose": "Purpose of embeddings",\n'
+            '      "embedding_model": "Model name",\n'
+            '      "provider": "Provider",\n'
+            '      "file_path": "Exact path from provided file list",\n'
+            '      "purpose": "Purpose",\n'
             '      "confidence_score": 90\n'
             "    }\n"
             "  ],\n"
             '  "vector_dbs": [\n'
             "    {\n"
-            '      "vector_db": "Vector DB name (e.g. Chroma, FAISS, Pinecone)",\n'
-            '      "file_path": "Path to file",\n'
-            '      "purpose": "Purpose of the database",\n'
+            '      "vector_db": "DB name",\n'
+            '      "file_path": "Exact path from provided file list",\n'
+            '      "purpose": "Purpose",\n'
             '      "confidence_score": 90\n'
             "    }\n"
             "  ],\n"
             '  "frameworks": [\n'
             "    {\n"
-            '      "framework": "Framework name (e.g. LangGraph, CrewAI, LangChain)",\n'
-            '      "file_path": "Path to file",\n'
-            '      "version": "Version if detected, or \\"latest\\"",\n'
-            '      "purpose": "Purpose of the framework",\n'
+            '      "framework": "Framework name",\n'
+            '      "file_path": "Exact path from provided file list",\n'
+            '      "version": "Version or latest",\n'
+            '      "purpose": "Purpose",\n'
             '      "confidence_score": 90\n'
             "    }\n"
             "  ],\n"
-            '  "prompts": [\n'
-            "    {\n"
-            '      "prompt_name": "Name/variable of prompt",\n'
-            '      "file_path": "Path to file",\n'
-            '      "prompt_type": "e.g. System Instruction, User Prompt",\n'
-            '      "prompt_complexity": "Low | Medium | High",\n'
-            '      "purpose": "What this prompt instructs the LLM to do"\n'
-            "    }\n"
-            "  ],\n"
+            '  "prompts": [],\n'
             '  "capabilities": {\n'
-            '    "GenAI": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
-            '    "RAG": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
-            '    "Agentic": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
-            '    "Multi-Model": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
-            '    "Computer Vision": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
-            '    "Speech AI": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" },\n'
-            '    "Multimodal": { "detected": true/false, "confidence": 0-100, "evidence": "String evidence", "explanation": "Detailed explanation" }\n'
+            '    "GenAI": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" },\n'
+            '    "RAG": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" },\n'
+            '    "Agentic": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" },\n'
+            '    "Multi-Model": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" },\n'
+            '    "Computer Vision": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" },\n'
+            '    "Speech AI": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" },\n'
+            '    "Multimodal": { "detected": false, "confidence": 0, "evidence": "", "explanation": "" }\n'
             "  },\n"
-            '  "rag_maturity": {\n'
-            '    "maturity": "Low | Basic | Intermediate | Mature",\n'
-            '    "score": 0-100,\n'
-            '    "evidence": ["e.g. SemanticChunker import detected"],\n'
-            '    "weaknesses": ["e.g. SQLite database for dense vectors"],\n'
-            '    "recommendations": ["e.g. Migrate to specialized vector DB"]\n'
-            "  },\n"
-            '  "agentic_maturity": {\n'
-            '    "maturity": "Basic | Intermediate | Advanced Agentic AI",\n'
-            '    "score": 0-100,\n'
-            '    "evidence": ["e.g. StateGraph instantiated"],\n'
-            '    "weaknesses": ["e.g. Short-term volatile session memory utilized"],\n'
-            '    "recommendations": ["e.g. Implement stateful checkpoint persistence"]\n'
-            "  },\n"
+            '  "rag_maturity": { "maturity": "N/A", "score": 0, "evidence": [], "weaknesses": [], "recommendations": [] },\n'
+            '  "agentic_maturity": { "maturity": "N/A", "score": 0, "evidence": [], "weaknesses": [], "recommendations": [] },\n'
             '  "qa_suggestions": {\n'
-            '    "test_coverage_estimate": 45,\n'
-            '    "recommendations": ["List of suggested QA improvements"],\n'
+            '    "test_coverage_estimate": 0,\n'
+            '    "recommendations": ["List QA improvements based on actual test files found"],\n'
             '    "suggested_tests": [\n'
             "      {\n"
             '        "test_name": "Test case name",\n'
-            '        "file_path": "File to test",\n'
-            '        "description": "What this test should validate",\n'
-            '        "mock_code": "PyTest/Playwright mock code snippet"\n'
+            '        "file_path": "Exact path from provided file list",\n'
+            '        "description": "What this test validates",\n'
+            '        "mock_code": "Code snippet"\n'
             "      }\n"
             "    ]\n"
             "  },\n"
             '  "pentest_findings": [\n'
             "    {\n"
             '      "id": "finding_1",\n'
-            '      "title": "Vulnerability Title",\n'
-            '      "severity": "Critical | High | Medium | Low",\n'
-            '      "file": "File path",\n'
-            '      "line": 42,\n'
-            '      "why": "Explanation of vulnerability in code context",\n'
-            '      "impact": "Security impact of vulnerability",\n'
-            '      "remediation": "Remediation code snippet"\n'
+            '      "title": "Vulnerability title",\n'
+            '      "severity": "Critical|High|Medium|Low",\n'
+            '      "file": "Exact path from provided file list",\n'
+            '      "line": 1,\n'
+            '      "why": "Explanation based on actual code",\n'
+            '      "impact": "Security impact",\n'
+            '      "remediation": "Fix"\n'
             "    }\n"
             "  ],\n"
             '  "governance_report": {\n'
-            '    "risk_score": 0-100,\n'
-            '    "eu_ai_act_classification": "Minimal Risk | Limited Risk | High Risk | Prohibited",\n'
-            '    "eu_ai_act_explanation": "Detailed explanation of risk classification",\n'
-            '    "license_compliance": "MIT / Apache-2.0 / Custom / Proprietary",\n'
-            '    "license_compatibility": "Compatible | Incompatible",\n'
-            '    "data_privacy_issues": ["List of issues (e.g. credentials leakage risk)"],\n'
-            '    "regulatory_recommendations": ["List of steps (e.g. strip emails from logs)"]\n'
+            '    "risk_score": 0,\n'
+            '    "eu_ai_act_classification": "Minimal Risk",\n'
+            '    "eu_ai_act_explanation": "Explanation based on what this repo actually does",\n'
+            '    "license_compliance": "Unknown",\n'
+            '    "license_compatibility": "Unknown",\n'
+            '    "data_privacy_issues": [],\n'
+            '    "regulatory_recommendations": []\n'
             "  }\n"
             "}"
         )
+
 
         readme_content = ""
         for path, content in file_contents.items():
@@ -865,17 +824,51 @@ class RepoIntelligence:
         if readme_content:
             user_message += f"README.md / Documentation Content:\n{readme_content}\n\n"
 
-        # Scan for AI files to append content for LLM context
-        ai_file_contexts = []
+        # ── Send representative source files to LLM for any repo type ─────
+        # Priority 1: config/manifest files (always informative)
+        priority_names = [
+            'package.json', 'pyproject.toml', 'requirements.txt', 'pom.xml',
+            'build.gradle', 'cargo.toml', 'go.mod', 'composer.json',
+            'dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
+            '.env.example', 'setup.py', 'setup.cfg',
+        ]
+        code_contexts = []
+        seen_context_paths = set()
+
+        # Add config/manifest files first
         for path, content in file_contents.items():
-            content_lower = content.lower()
-            if any(term in content_lower for term in ["gemini", "openai", "langgraph", "crewai", "pydantic_ai", "chromadb", "faiss", "vectorstore", "embedding", "llm"]):
-                ai_file_contexts.append(f"--- File: {path} ---\n{content[:3000]}\n")
-                if len(ai_file_contexts) >= 5:
+            if os.path.basename(path).lower() in priority_names:
+                if path not in seen_context_paths:
+                    code_contexts.append(f"--- File: {path} ---\n{content[:2000]}\n")
+                    seen_context_paths.add(path)
+
+        # Priority 2: main entry point files
+        entry_keywords = ['main.py', 'app.py', 'index.js', 'index.ts', 'server.js',
+                          'server.ts', 'app.js', 'app.ts', 'program.cs', 'main.go',
+                          'main.rs', 'main.java', '__init__.py']
+        for path, content in file_contents.items():
+            basename = os.path.basename(path).lower()
+            if basename in entry_keywords and path not in seen_context_paths:
+                code_contexts.append(f"--- File: {path} ---\n{content[:2500]}\n")
+                seen_context_paths.add(path)
+                if len(code_contexts) >= 4:
                     break
-        
-        if ai_file_contexts:
-            user_message += "\nSource Code Context (AI/ML & Core Modules):\n" + "\n".join(ai_file_contexts) + "\n"
+
+        # Priority 3: largest source files (most code = most context)
+        source_exts = {'.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.go', '.rs', '.cs', '.php'}
+        sized_files = [
+            (path, content)
+            for path, content in file_contents.items()
+            if os.path.splitext(path)[1].lower() in source_exts
+            and path not in seen_context_paths
+        ]
+        sized_files.sort(key=lambda x: len(x[1]), reverse=True)
+        for path, content in sized_files[:max(0, 8 - len(code_contexts))]:
+            code_contexts.append(f"--- File: {path} ---\n{content[:2500]}\n")
+            seen_context_paths.add(path)
+
+        if code_contexts:
+            user_message += "\nSource Code Context (Representative Files):\n" + "\n".join(code_contexts) + "\n"
 
         if sast_findings or secrets or code_review_issues:
             user_message += "Detected Heuristic/SAST Issues:\n"
@@ -910,26 +903,29 @@ class RepoIntelligence:
             )
         except Exception as e:
             print(f"[RepoIntelligence] AI Call failed or returned invalid JSON: {e}. Using rule-based fallback summary.")
+            # Repo-agnostic fallback — built entirely from scan data
+            lang_str = ', '.join(tech_stack.get('Languages', [])[:4]) or ', '.join([x.capitalize() for x in langs if x][:3]) or 'unknown'
+            stack_str = ', '.join(tech_stack.get('Frontend', []) + tech_stack.get('Backend', [])) or 'standard scripts'
+            db_str = ', '.join(tech_stack.get('Databases', [])) or 'no database detected'
+            devops_str = ', '.join(tech_stack.get('DevOps', [])) or 'no CI/CD detected'
             summary_text = (
-                "### Repository Overview\n\n"
-                f"The {self.repo_name} repository implements a software solution built primarily using "
-                f"{', '.join(tech_stack['Frontend'] + tech_stack['Backend']) if (tech_stack['Frontend'] or tech_stack['Backend']) else 'standard scripts'}. "
-                f"Its core capability centers around repository intelligence, static analysis, security modeling, and QA automation workflows. "
-                "The codebase is intended for software developers, security analysts, and quality engineers looking to automate audits.\n\n"
-                "### Architectural Assessment\n\n"
-                f"The project utilizes a {arch_type} pattern. It defines distinct boundary modules for backend services, "
-                "frontend user interfaces, security scanners, and QA simulation routines. "
-                "Separation of concerns is maintained through dedicated folders like core, routes, and services, enabling moderate scalability.\n\n"
-                f"Architecture Score: {arch_score}/100\n\n"
-                "### Security & Code Quality Assessment\n\n"
-                f"Core functionalities leverage heuristic checks and rule-based pipelines. "
-                f"While dependencies are defined in standard configurations, code quality is evaluated at a score of {maint_score}/100. "
-                f"Strengths include encapsulated helper files, while primary vulnerabilities revolve around input validation and the configuration of static models.\n\n"
-                f"Security & Quality Score: {sec_score}/100\n\n"
-                "### Executive Recommendation\n\n"
-                "The repository is structured well for a prototype or development environment. "
-                "To achieve production readiness, the top priorities must focus on increasing automated test coverage, "
-                "implementing dynamic input validation layers, and refining coupling between core analytical engines."
+                f"### Repository Overview\n\n"
+                f"The **{self.repo_name}** repository contains {files_cnt} files across {folders_cnt} directories, "
+                f"written primarily in **{lang_str}**. "
+                f"The tech stack includes: {stack_str}. "
+                f"Databases detected: {db_str}. DevOps tooling: {devops_str}.\n\n"
+                f"### Architectural Assessment\n\n"
+                f"The repository follows a **{arch_type}** pattern with {len(dirs)} top-level directories. "
+                f"{'Test coverage is ' + str(coverage) + '% based on ' + str(len(test_files)) + ' test files detected.' if test_files else 'No test files detected — test coverage is critically low.'} "
+                f"{'CI/CD pipelines are configured via GitHub Actions.' if has_ci else 'No CI/CD pipeline detected in .github/workflows.'} "
+                f"Architecture score: {arch_score}/100. Security score: {sec_score}/100.\n\n"
+                f"### Security & Code Quality Assessment\n\n"
+                f"Static analysis found **{len(sast_findings)} security issue(s)** and **{len(code_review_issues)} code quality issue(s)**. "
+                f"{'Hardcoded secrets detected in ' + str(len(secrets)) + ' location(s) — immediate action required. ' if secrets else 'No hardcoded secrets detected. '}"
+                f"Maintainability score: {maint_score}/100. Performance score: {perf_score}/100.\n\n"
+                f"### Scan Summary\n\n"
+                f"Scanned {files_cnt} files in {scan_duration}s. "
+                f"Found {len(sast_findings) + len(secrets) + len(code_review_issues)} total issues requiring attention."
             )
 
         # ── Merge LLM pentest findings into SAST list (repo-specific first) ────
