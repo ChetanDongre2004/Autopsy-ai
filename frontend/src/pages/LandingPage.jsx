@@ -9,7 +9,7 @@ export default function LandingPage() {
     { name: "AI Code Review Platform", path: "/products/review", icon: <Code2 className="w-8 h-8 text-indigo-400"/>, desc: "Senior-level multi-language code review with insights." },
     { name: "QA Automation Platform", path: "/products/qa", icon: <Zap className="w-8 h-8 text-amber-400"/>, desc: "Detect missing tests and generate robust unit tests." },
     { name: "Pentesting Platform", path: "/products/pentest", icon: <Target className="w-8 h-8 text-orange-400"/>, desc: "Safe simulated attack checks, fuzzing, and API risks." },
-    { name: "AMD AI Acceleration Hub", path: "/products/amd-ai-hub", icon: <Cpu className="w-8 h-8 text-orange-400"/>, desc: "Local RAG Code Chat, model discovery, and telemetry benchmarks." }
+    { name: "Repo AI Inspector", path: "/products/amd-ai-hub", icon: <Cpu className="w-8 h-8 text-orange-400"/>, desc: "Scan any repo to find AI models, map call locations, and analyze architectural patterns." }
   ];
 
   const stats = [

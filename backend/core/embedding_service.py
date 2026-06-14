@@ -41,8 +41,9 @@ class EmbeddingService:
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self.model_name = model_name
-        # Trigger model loading on initialization
-        self._model = _get_model()
+        # Do NOT load model here — defer to first encode() call so the
+        # scan-start HTTP request thread is never blocked by a HuggingFace download.
+        self._model = None
         self.dimension = _model_dimension
 
     def generate_embeddings_sync(
@@ -79,6 +80,10 @@ class EmbeddingService:
             return [[0.0] * self.dimension for _ in texts]
 
         try:
+            # Lazy-load model on first actual encode call
+            if self._model is None:
+                self._model = _get_model()
+                self.dimension = _model_dimension
             embeddings = self._model.encode(
                 valid_texts,
                 batch_size=batch_size,

@@ -1,3 +1,4 @@
+import { BASE_URL } from "../api.js";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
@@ -25,7 +26,7 @@ const getSeverityIconColor = (severity) => {
 };
 
 export default function CodeSecurityDashboard({ data }) {
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  // BASE_URL imported from src/api.js — uses Vite proxy in dev
   const [expandedSast, setExpandedSast] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isRemediating, setIsRemediating] = useState(false);

@@ -3,7 +3,6 @@ import shutil
 import json
 import time
 import uuid
-import random
 import hashlib
 from pathlib import Path
 from collections import defaultdict
@@ -31,9 +30,29 @@ class RepoIntelligence:
         safe_name = "".join(c for c in self.repo_name if c.isalnum() or c in ('-','_'))[:40]
         url_hash = hashlib.md5(self.repo_url.encode('utf-8')).hexdigest()[:8] if self.repo_url else "local"
         self.local_path = local_path_override if local_path_override else os.path.join(tempfile.gettempdir(), "autopsy_clones", f"{safe_name}_{url_hash}")
-        self.ignored = {'.git','node_modules','dist','build','venv','__pycache__','.next','.cache','coverage', '.pytest_cache', 'target', 'vendor', 'out', 'logs', 'tmp', 'public', '.idea', '.vscode'}
+        self.ignored = {
+            # Version control / IDE
+            '.git', '.svn', '.hg', '.idea', '.vscode', '.vs',
+            # JS/TS ecosystem
+            'node_modules', 'bower_components', '.yarn', '.pnp',
+            # Build outputs
+            'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit',
+            'target', 'bin', 'obj', 'release', 'debug',
+            # Python
+            'venv', '.venv', 'env', '__pycache__', '.pytest_cache',
+            '.mypy_cache', '.ruff_cache', 'site-packages', '.eggs',
+            # Coverage / test artifacts
+            'coverage', '.nyc_output', 'htmlcov', '.tox',
+            # Dependency / package caches
+            'vendor', 'packages', '.gradle', '.m2', '.ivy2', 'gems',
+            # Misc noise
+            'logs', 'log', 'tmp', 'temp', '.cache', '.parcel-cache',
+            'public', 'static', 'assets', 'media', 'uploads',
+            # Docker / infra
+            '.terraform', 'terraform.d',
+        }
         self.last_updated = datetime.now().isoformat()
-        self.scan_start = time.time()
+        self.scan_start = None  # Reset just before scan() to exclude clone time
         self.kb_engine = KnowledgeBaseEngine()
         self.smart_engine = SmartFindingsEngine()
         self.chunking_service = ChunkingService()
@@ -42,42 +61,135 @@ class RepoIntelligence:
         self.retrieval_engine = RetrievalEngine(self.kb_engine.get_session())
         self.repository_graph = RepositoryGraph()
         self.historical_memory = HistoricalMemory(self.kb_engine.get_session())
-        # Seed deterministic RNG based on URL or path
-        self.seed_val = int(hashlib.md5((self.repo_url + self.local_path).encode()).hexdigest(), 16)
-        self.rng = random.Random(self.seed_val)
         
-        self.qa_engine = QAEngine(self.kb_engine.get_session(), self.retrieval_engine, self.rng)
-        self.pentest_engine = PentestEngine(self.kb_engine.get_session(), self.retrieval_engine, self.rng)
+        self.qa_engine = QAEngine(self.kb_engine.get_session(), self.retrieval_engine)
+        self.pentest_engine = PentestEngine(self.kb_engine.get_session(), self.retrieval_engine)
 
     def clone_repo(self):
+        import stat
+        import subprocess
+        import tempfile
+
         def remove_readonly(func, path, excinfo):
-            import stat
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-            
-        if os.path.exists(self.local_path):
-            shutil.rmtree(self.local_path, onerror=remove_readonly)
-            
-        os.makedirs(self.local_path, exist_ok=True)
+            """Force-remove read-only files on Windows before deletion."""
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            except Exception:
+                pass
+
+        def safe_rmtree(path):
+            """
+            Robustly delete a directory tree on Windows.
+            Strategy: chmod all → rmdir /S /Q → sleep + Python rmtree fallback.
+            """
+            if os.path.exists(path):
+                for root, dirs, files in os.walk(path, topdown=False):
+                    for name in files:
+                        try:
+                            os.chmod(os.path.join(root, name), stat.S_IWRITE)
+                        except Exception:
+                            pass
+                    for name in dirs:
+                        try:
+                            os.chmod(os.path.join(root, name), stat.S_IWRITE)
+                        except Exception:
+                            pass
+
+            if os.name == 'nt':
+                try:
+                    subprocess.run(
+                        ['cmd', '/c', 'rmdir', '/S', '/Q', path],
+                        check=False, capture_output=True
+                    )
+                except Exception:
+                    pass
+
+            if os.path.exists(path):
+                time.sleep(0.5)
+                try:
+                    shutil.rmtree(path, onerror=remove_readonly)
+                except Exception:
+                    pass
+
+        def purge_lock_files(path):
+            """Delete any *.lock files inside a directory tree (git lock artifacts)."""
+            if not os.path.exists(path):
+                return
+            for root, dirs, files in os.walk(path):
+                for name in files:
+                    if name.endswith('.lock'):
+                        try:
+                            fp = os.path.join(root, name)
+                            os.chmod(fp, 0o666)
+                            os.remove(fp)
+                        except Exception:
+                            pass
+
+        # ── Always clone into a FRESH temporary directory ───────────────────────
+        # Using tempfile.mkdtemp() guarantees an empty, OS-managed directory with
+        # a unique name. This eliminates ALL stale-lock collisions (.git/config,
+        # shallow.lock, index.lock, etc.) regardless of what previous clones left
+        # behind in the standard deterministic path.
+        safe_name = "".join(c for c in self.repo_name if c.isalnum() or c in ('-', '_'))[:30]
+        clone_dir = tempfile.mkdtemp(prefix=f"autopsy_{safe_name}_")
+        # mkdtemp creates the dir; git clone requires the target to NOT exist,
+        # so remove it immediately and let git recreate it.
+        shutil.rmtree(clone_dir, ignore_errors=True)
+        # Update instance so downstream scan() reads from the correct path.
+        self.local_path = clone_dir
+
+        # Env vars to suppress Windows credential prompts and git config interference
         env_dict = {
             'GIT_TERMINAL_PROMPT': '0',
             'GIT_ASKPASS': 'echo',
-            'GCM_INTERACTIVE': 'Never'
+            'GCM_INTERACTIVE': 'Never',
+            'GIT_CONFIG_NOSYSTEM': '1',
+            # Point HOME to a neutral temp dir so git doesn't read ~/.gitconfig
+            # (which can trigger additional lock attempts on Windows)
+            'HOME': tempfile.gettempdir(),
+            'GIT_AUTHOR_EMAIL': 'autopsy@local',
+            'GIT_COMMITTER_EMAIL': 'autopsy@local',
         }
-        import subprocess
+
         try:
-            cmd = ["git", "clone", "--depth=1", "--single-branch", "--branch", self.branch, self.repo_url, self.local_path]
-            subprocess.run(cmd, check=True, capture_output=True, text=True, env={**os.environ, **env_dict})
+            cmd = [
+                "git", "clone", "--depth=1", "--single-branch",
+                "--branch", self.branch,
+                self.repo_url, self.local_path
+            ]
+            subprocess.run(
+                cmd, check=True, capture_output=True, text=True,
+                env={**os.environ, **env_dict}
+            )
             self.last_updated = datetime.now().isoformat()
         except subprocess.CalledProcessError as e:
+            # Purge any lock files left by the failed attempt, then retry
+            purge_lock_files(self.local_path)
+            if os.path.exists(self.local_path):
+                safe_rmtree(self.local_path)
+
+            # Fallback: try without specifying branch (uses remote default branch)
             try:
-                if os.path.exists(self.local_path): shutil.rmtree(self.local_path, onerror=remove_readonly)
-                os.makedirs(self.local_path, exist_ok=True)
-                cmd_fallback = ["git", "clone", "--depth=1", "--single-branch", self.repo_url, self.local_path]
-                subprocess.run(cmd_fallback, check=True, capture_output=True, text=True, env={**os.environ, **env_dict})
+                # Always get a new unique path for the retry too
+                retry_dir = tempfile.mkdtemp(prefix=f"autopsy_{safe_name}_r_")
+                shutil.rmtree(retry_dir, ignore_errors=True)
+                self.local_path = retry_dir
+
+                cmd_fallback = [
+                    "git", "clone", "--depth=1", "--single-branch",
+                    self.repo_url, self.local_path
+                ]
+                subprocess.run(
+                    cmd_fallback, check=True, capture_output=True, text=True,
+                    env={**os.environ, **env_dict}
+                )
                 self.last_updated = datetime.now().isoformat()
             except subprocess.CalledProcessError as fallback_err:
-                raise Exception(f"Failed to clone repository. Ensure URL is public and correct. Error: {fallback_err.stderr}")
+                raise Exception(
+                    f"Failed to clone repository. Ensure URL is public and correct. "
+                    f"Error: {fallback_err.stderr}"
+                )
 
     def _detect_tech_stack(self, all_files, file_contents):
         tech = {"Frontend": [], "Backend": [], "Languages": set(), "Databases": set(), "DevOps": set()}
@@ -117,43 +229,133 @@ class RepoIntelligence:
         return {k: list(v) if isinstance(v, set) else v for k, v in tech.items()}
 
     def scan(self):
+        """Walk the cloned repository and collect file metadata + content.
+
+        Improvements over the old implementation:
+        - scan_start is reset HERE, so clone time is excluded from the budget.
+        - Soft timeout (120 s): on expiry we log a warning and return whatever
+          we've collected so far — no hard crash.
+        - Depth limit (MAX_DEPTH=10): prevents infinite recursion in deeply
+          nested monorepos / dependency trees.
+        - Hard file-count cap (MAX_FILES=10_000): stops listing after 10k files
+          so we never OOM on gigantic repos.
+        - file_contents cap lowered to 300 files, read limit 8 KB each.
+        - Extended binary/noise extension skip list.
+        - Expanded self.ignored set (defined in __init__).
+        """
+        import logging
+
+        # Reset the clock NOW — clone time must not count against scan budget
+        self.scan_start = time.time()
+        SOFT_TIMEOUT   = 120   # seconds — graceful exit, not exception
+        MAX_DEPTH      = 10    # max directory nesting depth
+        MAX_FILES      = 10_000  # stop appending file names after this many
+        MAX_CONTENT    = 300   # max number of files to read into memory
+        MAX_READ_BYTES = 8_000  # chars read per file
+
         files_cnt, folders_cnt = 0, 0
         langs = defaultdict(int)
-        all_dirs, all_files = set(), []
-        file_contents = {}
+        all_dirs: set = set()
+        all_files: list = []
+        file_contents: dict = {}
+        timed_out = False
 
-        allowed_exts = {'.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.go', '.php', '.rb', '.cs', '.json', '.yaml', '.yml', '.env', '.txt', '.md', '.xml'}
+        # Extensions whose content we want to analyse
+        allowed_exts = {
+            '.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.go',
+            '.php', '.rb', '.cs', '.json', '.yaml', '.yml', '.env',
+            '.txt', '.md', '.xml', '.toml', '.ini', '.cfg', '.sh',
+            '.tf', '.kt', '.swift', '.rs', '.c', '.cpp', '.h',
+        }
+
+        # Extensions to skip entirely (binary / generated / media)
+        skip_exts = {
+            '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico',
+            '.mp4', '.mov', '.avi', '.mp3', '.wav',
+            '.zip', '.tar', '.gz', '.rar', '.7z',
+            '.exe', '.dll', '.so', '.dylib', '.pyd',
+            '.pdf', '.docx', '.xlsx', '.pptx',
+            '.lock', '.woff', '.woff2', '.ttf', '.eot',
+            '.min.js', '.map', '.pyc', '.pyo', '.class',
+            '.jar', '.war', '.ear',
+        }
 
         for root, dirs, fs in os.walk(self.local_path):
-            if time.time() - self.scan_start > 90:
-                raise Exception("Execution Blocked: Project structure is too massively dense or nested to be scanned within the 90 second hard timeout.")
-                
-            dirs[:] = [d for d in dirs if d not in self.ignored and not d.startswith('.')]
-            folders_cnt += len(dirs)
+            # ── Soft timeout ────────────────────────────────────────────────
+            if time.time() - self.scan_start > SOFT_TIMEOUT:
+                logging.warning(
+                    "[RepoIntelligence.scan] Soft timeout reached (%.0fs). "
+                    "Returning partial scan results (%d files collected).",
+                    SOFT_TIMEOUT, files_cnt
+                )
+                timed_out = True
+                break
+
+            # ── Hard file cap ───────────────────────────────────────────────
+            if files_cnt >= MAX_FILES:
+                logging.warning(
+                    "[RepoIntelligence.scan] File cap (%d) reached. "
+                    "Stopping directory walk.", MAX_FILES
+                )
+                break
+
+            # ── Depth pruning ────────────────────────────────────────────────
             rel_root = os.path.relpath(root, self.local_path).replace("\\", "/")
+            depth = 0 if rel_root == '.' else rel_root.count('/') + 1
+            if depth >= MAX_DEPTH:
+                dirs[:] = []  # Don't descend further
+                continue
+
+            # ── Directory filter ─────────────────────────────────────────────
+            dirs[:] = [
+                d for d in dirs
+                if d not in self.ignored
+                and not d.startswith('.')
+                and not d.startswith('__')
+            ]
+            folders_cnt += len(dirs)
+
             if rel_root != '.':
-                for pt in rel_root.split('/'): all_dirs.add(pt)
+                for pt in rel_root.split('/'):
+                    all_dirs.add(pt)
 
+            # ── File iteration ───────────────────────────────────────────────
             for f in fs:
-                if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.mp4', '.mov', '.zip', '.exe', '.dll', '.pdf', '.docx', '.lock')):
-                    continue
-                
-                files_cnt += 1
+                fname_lower = f.lower()
                 ext = Path(f).suffix.lower()
-                if ext: langs[ext] += 1
-                rel_file = f"{rel_root}/{f}" if rel_root != '.' else f
-                all_files.append(rel_file)
 
-                if (ext in allowed_exts or f in ['Dockerfile', 'Makefile']) and len(file_contents) < 500:
+                # Skip binary / generated / media by extension
+                if ext in skip_exts or fname_lower.endswith('.min.js') or fname_lower.endswith('.min.css'):
+                    continue
+                # Skip very long generated filenames (hashed assets)
+                if len(f) > 120:
+                    continue
+
+                files_cnt += 1
+                if ext:
+                    langs[ext] += 1
+
+                rel_file = f"{rel_root}/{f}" if rel_root != '.' else f
+                if len(all_files) < MAX_FILES:
+                    all_files.append(rel_file)
+
+                # Read content for allowed extensions, up to the cap
+                if (
+                    len(file_contents) < MAX_CONTENT
+                    and (ext in allowed_exts or f in ('Dockerfile', 'Makefile', '.env.example'))
+                ):
                     filepath = os.path.join(root, f)
                     try:
-                        if os.path.getsize(filepath) < 1_000_000:
-                            with open(filepath, 'r', encoding='utf-8') as file:
-                                file_contents[rel_file] = file.read(15000)
-                    except Exception: pass
+                        size = os.path.getsize(filepath)
+                        # Skip empty or oversized files (> 500 KB)
+                        if 0 < size < 500_000:
+                            with open(filepath, 'r', encoding='utf-8', errors='ignore') as fh:
+                                file_contents[rel_file] = fh.read(MAX_READ_BYTES)
+                    except OSError:
+                        pass
 
         sorted_langs = sorted(langs.items(), key=lambda x: x[1], reverse=True)[:5]
-        top_langs = [ext[0].replace('.','') for ext in sorted_langs]
+        top_langs = [ext[0].replace('.', '') for ext in sorted_langs]
         return files_cnt, folders_cnt, top_langs, all_files, file_contents, list(all_dirs)
 
     def determine_owner_team(self, finding_category, file_path, content_snippet=""):
@@ -177,57 +379,18 @@ class RepoIntelligence:
 
 
 
-    def _generate_deterministic_pentest(self, tech_stack, repo_url, all_files):
-        assets = self.rng.randint(5, 50)
-        critical = self.rng.randint(0, 3)
-        high = self.rng.randint(1, 8)
-        
-        domains = [{"host": f"api.{self.repo_name}.com", "ip": f"192.168.{self.rng.randint(1,255)}.{self.rng.randint(1,255)}", "status": "Active", "risk": "High"}]
-        ports = [
-            {"port": 80, "protocol": "tcp", "service": "http", "state": "open"},
-            {"port": 443, "protocol": "tcp", "service": "https", "state": "open"}
-        ]
-        
-        findings = []
-        if critical > 0:
-            findings.append({
-                "id": f"PT-C-{self.rng.randint(100,999)}", "title": "SQL Injection in Authentication Bypass", "category": "API Security", "severity": "Critical", "cvss": 9.8, "cwe": "CWE-89",
-                "asset": f"https://api.{self.repo_name}.com/v1/login", "parameter": "username", "status": "Open", "owner": "Backend Team",
-                "description": "The login endpoint concatenates user input directly into the SQL query.",
-                "evidence": "POST /v1/login\n{\"username\": \"admin' OR '1'='1\"}", "remediation": "Use parameterized queries or an ORM.", "fix_code": "cursor.execute('SELECT * FROM users WHERE username=?', (username,))"
-            })
-        for i in range(high):
-            findings.append({
-                "id": f"PT-H-{self.rng.randint(100,999)}", "title": self.rng.choice(["Stored XSS", "IDOR in User Profile", "Missing Rate Limiting", "JWT Secret Weakness"]),
-                "category": self.rng.choice(["Web Pentest", "API Security", "Auth Testing"]), "severity": "High", "cvss": round(self.rng.uniform(7.0, 8.9), 1), "cwe": "CWE-X",
-                "asset": f"https://api.{self.repo_name}.com/resource/{self.rng.randint(1, 100)}", "parameter": "id", "status": self.rng.choice(["Open", "Open", "In Progress"]), "owner": "Backend Team",
-                "description": "Vulnerability identified during automated DAST payload injection.", "evidence": "Detected via fuzzing.", "remediation": "Apply standard security controls (validation, encoding, ratelimits).", "fix_code": "// Patch required"
-            })
-            
-        return {
-            "overview": {
-                "risk_score": min(100, (critical * 20) + (high * 10)), "critical": critical, "high": high, "medium": self.rng.randint(5, 20),
-                "low": self.rng.randint(10, 40), "total_assets": assets, "sla_breached": self.rng.randint(0, 2)
-            },
-            "recon": {
-                "domains": domains, "ports": ports, "technologies": tech_stack.get("Frontend", []) + tech_stack.get("Backend", []) + tech_stack.get("Databases", []) + tech_stack.get("DevOps", [])
-            },
-            "findings": findings,
-            "attack_paths": [
-                {"name": "Admin Compromise via Injection", "severity": "Critical", "steps": ["Scan API", "Discover /login", "Inject Payload", "Bypass Auth", "Takeover"]}
-            ] if critical > 0 else [],
-            "trends": [{"date": f"Day {i}", "critical": critical, "high": high, "resolved": self.rng.randint(0, 3)} for i in range(1, 8)]
-        }
+    # Removed: _generate_deterministic_pentest was replaced by PentestEngine with real SAST rules.
 
-    def _generate_deterministic_code_review(self, sast_findings, code_review_issues, all_files):
-        # Group issues by file
+    def _generate_code_review(self, sast_findings, code_review_issues, all_files, file_contents):
+        """Generate real code review data based on actual SAST findings and file analysis."""
         file_issues_map = defaultdict(list)
         for issue in sast_findings + code_review_issues:
-            file_issues_map[issue['file']].append(issue)
-            
+            file_issues_map[issue.get('file', issue.get('file_path', 'unknown'))].append(issue)
+
         files = []
         for file_path, issues in file_issues_map.items():
-            loc = self.rng.randint(50, 800)
+            content = file_contents.get(file_path, "")
+            loc = len(content.split("\n")) if content else 0
             score = max(20, 100 - (len(issues) * 15))
             files.append({
                 "file_name": file_path,
@@ -238,26 +401,47 @@ class RepoIntelligence:
                 "complexity_score": "Low" if score > 80 else "High",
                 "issues": issues
             })
-            
+
+        scan_duration = round(time.time() - self.scan_start, 2)
         overall_score = max(20, 100 - (len(sast_findings) * 10) - (len(code_review_issues) * 5))
         grade = 'A' if overall_score > 90 else 'B' if overall_score > 75 else 'C' if overall_score > 60 else 'D'
-        
+        total_loc = sum(len((file_contents.get(f, "")).split("\n")) for f in all_files)
+
+        # Detect broad exception handlers
+        broad_exceptions = sum(1 for c in file_contents.values() if "except Exception" in c or "except:" in c)
+        # Detect nested loops
+        nested_loops = sum(1 for c in file_contents.values() if any(
+            (line.strip().startswith("for ") or line.strip().startswith("while ")) and
+            any((l2.strip().startswith("for ") or l2.strip().startswith("while "))
+                for l2 in c.split("\n")[c.split("\n").index(line)+1:c.split("\n").index(line)+10])
+            for line in c.split("\n") if line.strip().startswith(("for ", "while ")))
+        )
+        performance_score = max(40, 100 - nested_loops * 10)
+        arch_score = max(40, 100 - len(code_review_issues) * 5)
+
+        mentorship = [
+            "Adopt the Repository Pattern to decouple database queries from business logic.",
+            "Replace broad `except Exception` handlers with specific error types to improve debuggability.",
+            "Move all credentials and API keys to environment variables or a secrets manager.",
+        ]
+
         return {
             "overall_score": overall_score,
             "grade": grade,
-            "risk_level": "High" if len(sast_findings) > 0 else "Medium",
+            "risk_level": "High" if any(s.get('severity') == 'Critical' for s in sast_findings) else "Medium" if sast_findings else "Low",
             "total_files": len(all_files),
-            "scan_duration": f"{self.rng.randint(12, 45)}s",
-            "summary": "The AI engine performed a deep algorithmic analysis, uncovering several architectural anti-patterns and potential security injection vectors. Technical debt is accumulating in core modules.",
+            "total_loc": total_loc,
+            "scan_duration": f"{scan_duration}s",
+            "summary": f"Scanned {len(all_files)} files ({total_loc:,} lines). Found {len(sast_findings)} security issues and {len(code_review_issues)} code quality issues.",
             "total_issues": len(sast_findings) + len(code_review_issues),
             "files": files,
             "scores": {
-                "Code Quality": max(0, 100 - len(code_review_issues) * 2),
+                "Code Quality": max(0, 100 - len(code_review_issues) * 5),
                 "Security": max(0, 100 - len(sast_findings) * 15),
-                "Maintainability": max(0, 95 - len(code_review_issues) * 3),
-                "Performance": self.rng.randint(70, 95),
-                "Architecture": self.rng.randint(60, 90),
-                "Testing": self.rng.randint(40, 85)
+                "Maintainability": max(0, 95 - (broad_exceptions * 5) - len(code_review_issues) * 3),
+                "Performance": performance_score,
+                "Architecture": arch_score,
+                "Testing": 0  # Will be set to coverage in run_full_analysis
             },
             "summary_cards": {
                 "total_issues": len(sast_findings) + len(code_review_issues),
@@ -265,11 +449,7 @@ class RepoIntelligence:
                 "code_smells": len(code_review_issues),
                 "hotspot_files": len([f for f in files if f['score'] < 60])
             },
-            "ai_mentorship": [
-                "Consider implementing the Repository Pattern to decouple your database logic from business rules.",
-                "Your error handling relies too heavily on broad exceptions. Adopt a specific error hierarchy.",
-                "Extract configuration strings into environment variables to prevent accidental credential leakage."
-            ]
+            "ai_mentorship": mentorship
         }
 
     def run_full_analysis(self, progress_callback=None):
@@ -327,44 +507,132 @@ class RepoIntelligence:
         core_files = [f for f in all_files if 'service' in f.lower() or 'controller' in f.lower() or 'core' in f.lower() or 'utils' in f.lower()]
         auth_paths = [f for f in all_files if 'auth' in f.lower() or 'login' in f.lower() or 'user' in f.lower()]
 
-        coverage = min(95, int((len(test_files) / max(files_cnt, 1)) * 300)) if test_files else self.rng.randint(5, 25)
+        coverage = min(95, int((len(test_files) / max(files_cnt, 1)) * 300)) if test_files else 10
 
         sast_findings = []
         secrets = []
         code_review_issues = []
         grounded_insights = []
-        
-        # Inject deterministic real-looking findings based on actual files
-        for i, file_path in enumerate(all_files[:30]):
-            txt_lower = file_contents.get(file_path, "").lower()
-            if not txt_lower: continue
-            
-            # Simulated regex detection mapping
-            if self.rng.random() > 0.85:
-                sast_findings.append({
-                    "title": self.rng.choice(["Insecure Cryptography", "Path Traversal Risk", "Cross-Site Scripting (XSS)", "Unvalidated Redirect"]),
-                    "severity": self.rng.choice(["High", "Medium"]), "file": file_path, "line": self.rng.randint(1, 100), "category": "Security",
-                    "why": "Identified risky pattern in file structure.", "impact": "High", "fix": "Implement strict validation.", "eta": "2 Hrs", 
-                    "owner": self.determine_owner_team("Security", file_path), "code_snippet": "..."
-                })
-            
-            if 'api_key' in txt_lower or 'password' in txt_lower or 'secret' in txt_lower:
-                 secrets.append({"type": "Potential Hardcoded Secret", "severity": "Critical", "file": file_path, "fix": "Move to Secrets Manager.", "line": "..."})
 
-            if len(txt_lower.split('\n')) > 400:
-                code_review_issues.append({
-                    "severity": "Medium", "category": "Architecture", "file": file_path, "line": 0,
-                    "title": "God Object Detected", "why": f"File is extremely large, severely reducing maintainability.", 
-                    "suggestion": "Split into smaller, single-responsibility modules.", "rule": "CleanArch-001"
-                })
-        
-        # Calculate dynamic metrics
-        unused = [f for f in all_files if 'mock' in f.lower() or 'legacy' in f.lower() or 'sandbox' in f.lower() or 'old' in f.lower()]
-        if not unused and files_cnt > 10: unused = self.rng.sample(all_files, min(len(all_files), 2))
-        
-        duplicate_percentage = min(25, int((len(unused) * 5) / max(1, files_cnt)) + self.rng.randint(2, 10))
-        avg_complexity = "Challenging" if files_cnt > 50 else "Moderate"
-        if files_cnt < 10: avg_complexity = "Simple"
+        # ── REAL SAST scan — consolidated by RULE (not by rule+file) ─────────
+        # Same vulnerability type across multiple files = ONE roadmap card
+        # listing all affected files. This is how SonarQube / Snyk behave.
+        from core.pentest_engine import SAST_RULES
+        import re as _re
+
+        # rule_id → { rule_def, files: [(file_path, line_num, code_snippet)] }
+        rule_hits: dict = {}
+
+        for file_path, content in file_contents.items():
+            if not content:
+                continue
+            lines = content.split("\n")
+            for rule in SAST_RULES:
+                for line_num, line in enumerate(lines, 1):
+                    if _re.search(rule["pattern"], line, _re.IGNORECASE):
+                        rid = rule["id"]
+                        if rid not in rule_hits:
+                            rule_hits[rid] = {
+                                "rule": rule,
+                                "files": []
+                            }
+                        # One entry per file (not per line)
+                        if not any(f[0] == file_path for f in rule_hits[rid]["files"]):
+                            rule_hits[rid]["files"].append(
+                                (file_path, line_num, line.strip()[:200])
+                            )
+                        break  # first match per file per rule is enough
+
+        for rid, hit in rule_hits.items():
+            rule = hit["rule"]
+            affected_files = hit["files"]
+            first_file, first_line, first_snippet = affected_files[0]
+
+            # Build multi-file evidence string
+            if len(affected_files) == 1:
+                evidence_detail = f"{first_file} line {first_line}"
+                file_label = first_file
+            else:
+                file_list = ", ".join(f"{fp} (L{ln})" for fp, ln, _ in affected_files[:5])
+                if len(affected_files) > 5:
+                    file_list += f" ... +{len(affected_files)-5} more"
+                evidence_detail = f"{len(affected_files)} files affected: {file_list}"
+                file_label = first_file  # primary file for owner logic
+
+            sast_findings.append({
+                "id":           rid,
+                "title":        rule["title"],
+                "severity":     rule["severity"],
+                "file":         file_label,
+                "line":         first_line,
+                "category":     rule["category"],
+                "cwe":          rule.get("cwe", ""),
+                "why":          rule["description"],
+                "impact":       f"CWE-{rule.get('cwe','N/A')} | Severity: {rule['severity']} | {rule['description'][:100]}",
+                "fix":          rule["remediation"],
+                "code_snippet": first_snippet,
+                "files_affected": len(affected_files),
+                "all_files":    [fp for fp, _, _ in affected_files],
+                "evidence_detail": evidence_detail,
+                "owner":        self.determine_owner_team(rule["category"], file_label),
+            })
+
+        # ── REAL secret detection ─────────────────────────────────────────
+        import re as _re2
+        SECRET_PATTERNS = [
+            (_re2.compile(r'(?:api_key|apikey|api-key)\s*=\s*["\'][^"\' ]{8,}["\']', _re2.IGNORECASE), "API Key"),
+            (_re2.compile(r'(?:password|passwd|pwd)\s*=\s*["\'][^"\' ]{4,}["\']', _re2.IGNORECASE), "Password"),
+            (_re2.compile(r'(?:secret|token)\s*=\s*["\'][^"\' ]{8,}["\']', _re2.IGNORECASE), "Secret/Token"),
+            (_re2.compile(r'sk-[a-zA-Z0-9]{20,}', _re2.IGNORECASE), "OpenAI API Key"),
+            (_re2.compile(r'AIza[0-9A-Za-z\-_]{35}', _re2.IGNORECASE), "Google API Key"),
+            (_re2.compile(r'gh[pousr]_[A-Za-z0-9_]{36,}', _re2.IGNORECASE), "GitHub Token"),
+        ]
+        seen_secrets: set = set()
+        for file_path, content in file_contents.items():
+            for pattern, secret_type in SECRET_PATTERNS:
+                for match in pattern.finditer(content):
+                    line_num = content[:match.start()].count("\n") + 1
+                    key = f"{secret_type}:{file_path}"
+                    if key not in seen_secrets:
+                        seen_secrets.add(key)
+                        secrets.append({
+                            "type": f"Hardcoded {secret_type}", "severity": "Critical",
+                            "file": file_path, "line": line_num,
+                            "fix": f"Remove {secret_type} from source code. Store in environment variables or a secrets manager.",
+                        })
+
+        # ── REAL code quality scan — also consolidated per-file ─────────────
+        seen_code_issues: set = set()
+        for file_path, content in file_contents.items():
+            loc = len(content.split("\n"))
+            if loc > 400:
+                key = f"large-file:{file_path}"
+                if key not in seen_code_issues:
+                    seen_code_issues.add(key)
+                    code_review_issues.append({
+                        "severity": "Medium", "category": "Architecture",
+                        "file": file_path, "line": 0,
+                        "title": "God Object / Large File Detected",
+                        "why": f"`{file_path}` has {loc} lines — severely reduces maintainability and increases cognitive load.",
+                        "suggestion": "Split into smaller, single-responsibility modules.", "rule": "CleanArch-001"
+                    })
+            broad_count = content.count("except Exception") + content.count("except:")
+            if broad_count > 2:
+                key = f"broad-except:{file_path}"
+                if key not in seen_code_issues:
+                    seen_code_issues.add(key)
+                    code_review_issues.append({
+                        "severity": "Medium", "category": "Reliability",
+                        "file": file_path, "line": 0,
+                        "title": "Broad Exception Handling Detected",
+                        "why": f"Found {broad_count} broad `except Exception` clauses in `{file_path}`. This masks real errors and makes debugging production incidents impossible.",
+                        "suggestion": "Catch specific exception types to enable proper error diagnosis.", "rule": "REL-002"
+                    })
+
+        # ── Static metrics ────────────────────────────────────────────────────
+        unused = [f for f in all_files if any(kw in f.lower() for kw in ['mock', 'legacy', 'sandbox', 'old', 'temp', 'backup'])]
+        duplicate_percentage = min(25, int((len(unused) * 5) / max(1, files_cnt)))
+        avg_complexity = "Challenging" if files_cnt > 50 else "Moderate" if files_cnt > 10 else "Simple"
 
         base_score = min(90, max(40, 70 + (coverage // 5) - (len(secrets) * 15) - (len(sast_findings) * 5) - (duplicate_percentage // 2)))
         overall_score = base_score
@@ -636,42 +904,198 @@ class RepoIntelligence:
                 "implementing dynamic input validation layers, and refining coupling between core analytical engines."
             )
 
-        # Merge LLM pentest findings to heuristic findings
+        # ── Merge LLM pentest findings into SAST list (repo-specific first) ────
+        llm_specific_recs = []  # LLM findings are most repository-unique
         if llm_findings and "pentest_findings" in llm_findings:
             for f in llm_findings["pentest_findings"]:
-                if not any(x.get("file") == f.get("file") and x.get("title") == f.get("title") for x in sast_findings):
+                if not f.get("file") or not f.get("title"):
+                    continue
+                # Deduplicate against SAST rule findings
+                already_in_sast = any(
+                    x.get("file") == f.get("file") and x.get("title") == f.get("title")
+                    for x in sast_findings
+                )
+                if not already_in_sast:
                     sast_findings.append({
-                        "title": f.get("title"),
-                        "severity": f.get("severity"),
-                        "file": f.get("file"),
-                        "line": f.get("line", 1),
-                        "category": "Security",
-                        "why": f.get("why"),
-                        "impact": f.get("impact"),
-                        "fix": f.get("remediation"),
-                        "owner": self.determine_owner_team("Security", f.get("file", ""))
+                        "id":       f.get("id", ""),
+                        "title":    f.get("title", ""),
+                        "severity": f.get("severity", "High"),
+                        "file":     f.get("file", ""),
+                        "line":     f.get("line", 1),
+                        "category": f.get("category", "Security"),
+                        "why":      f.get("why", ""),
+                        "impact":   f.get("impact", ""),
+                        "fix":      f.get("remediation", ""),
+                        "code_snippet": f.get("code_snippet", ""),
+                        "evidence_detail": f"{f.get('file','')} line {f.get('line',1)}",
+                        "source":   "llm",  # mark as LLM-generated (most specific)
+                        "owner":    self.determine_owner_team(
+                                        f.get("category", "Security"),
+                                        f.get("file", "")
+                                    ),
                     })
-            # Recompute scores based on real findings
-            sec_score = min(100, max(10, 95 - (len(secrets) * 25) - (len(sast_findings) * 10)))
+                    llm_specific_recs.append(f.get("id", f.get("title", "")))
+
+            sec_score    = min(100, max(10, 95 - (len(secrets) * 25) - (len(sast_findings) * 10)))
             overall_score = min(90, max(40, 70 + (coverage // 5) - (len(secrets) * 15) - (len(sast_findings) * 5) - (duplicate_percentage // 2)))
 
-        recs = []
-        if secrets:
-            recs.append(self.smart_engine.generate_recommendation({
-                "category": "Security", "severity": "Critical", "file_path": secrets[0]['file'], 
-                "issue": "Migrate Detected Hardcoded Secrets", "owner": "Security Team"
-            }, tech_stack))
-            
-        for insight in grounded_insights + sast_findings + code_review_issues:
-            if len(recs) < 6:
-                insight['owner'] = self.determine_owner_team(insight.get('category', 'Architecture'), insight.get('file_path', insight.get('file', '')))
-                insight['issue'] = insight.get('issue', insight.get('title', 'Refactoring opportunity'))
-                recs.append(self.smart_engine.generate_recommendation(insight, tech_stack))
+        # ══════════════════════════════════════════════════════════════════════
+        # BUILD RECOMMENDATIONS — REAL FINDINGS ONLY
+        # Policy:
+        #   • Every card must trace to an actual scan finding with evidence.
+        #   • Card titles are enriched with file+line so the same SAST rule
+        #     produces DIFFERENT titles for different repositories.
+        #   • LLM-generated findings come first (most repository-specific).
+        #   • No fallback, no demo, no static content.
+        # ══════════════════════════════════════════════════════════════════════
+        import os as _os
+        raw_recs = []
 
+        # ── Helper: build a repo-specific, file-enriched card title ───────────
+        def enrich_title(base_title: str, file_path: str, line_no=None, source: str = "sast") -> str:
+            """
+            Make the card title unique to this repository.
+            'Wildcard CORS Policy' in repo-A's main.py:29
+            becomes  'Wildcard CORS Policy — main.py:29'
+            A different repo with the same rule in config.py:5
+            becomes  'Wildcard CORS Policy — config.py:5'
+            """
+            if not file_path or file_path in ("unknown", "unknown file"):
+                return base_title
+            basename = _os.path.basename(file_path)
+            if line_no:
+                return f"{base_title} — {basename}:{line_no}"
+            return f"{base_title} — {basename}"
+
+        # 1. HARDCODED SECRETS — Critical, always repo-specific
+        for secret in secrets:
+            f_path = secret.get("file", "unknown")
+            l_no   = secret.get("line")
+            raw_recs.append(self.smart_engine.generate_recommendation({
+                "category":        "Security",
+                "severity":        "Critical",
+                "file_path":       f_path,
+                "file":            f_path,
+                "line":            l_no,
+                "issue":           enrich_title(f"Hardcoded {secret.get('type', 'Secret')}", f_path, l_no),
+                "title":           enrich_title(f"Hardcoded {secret.get('type', 'Secret')}", f_path, l_no),
+                "why":             (
+                    f"A `{secret.get('type', 'secret')}` was hardcoded at "
+                    f"`{f_path}` line {l_no}. "
+                    "Any developer with read access to this repo has the credential. "
+                    "If the repository is or was ever public, the key may already be compromised."
+                ),
+                "fix":             secret.get("fix", ""),
+                "code_snippet":    secret.get("code_snippet", ""),
+                "evidence_detail": f"{f_path} line {l_no}" if l_no else f_path,
+                "owner":           "Security Team",
+                "source":          "secret-scanner",
+            }, tech_stack))
+
+        # 2. SAST / LLM SECURITY FINDINGS — enriched titles per file
+        for finding in sast_findings:
+            f_path   = finding.get("file", "unknown")
+            l_no     = finding.get("line")
+            rule_id  = finding.get("id", "")
+            base_ttl = finding.get("title", finding.get("issue", ""))
+            n_files  = finding.get("files_affected", 1)
+
+            # If this rule hit multiple files, suffix tells the count
+            if n_files > 1:
+                enriched = f"{base_ttl} ({n_files} files)"
+            else:
+                enriched = enrich_title(base_ttl, f_path, l_no, finding.get("source", "sast"))
+
+            raw_recs.append(self.smart_engine.generate_recommendation({
+                "category":        finding.get("category", "Security"),
+                "severity":        finding.get("severity", "Medium"),
+                "file_path":       f_path,
+                "file":            f_path,
+                "line":            l_no,
+                "rule":            rule_id,
+                "cwe":             finding.get("cwe", ""),
+                "issue":           enriched,
+                "title":           enriched,
+                "why":             finding.get("why", finding.get("description", "")),
+                "fix":             finding.get("fix", finding.get("remediation", "")),
+                "code_snippet":    finding.get("code_snippet", ""),
+                "impact":          finding.get("impact", ""),
+                "files_affected":  n_files,
+                "evidence_detail": finding.get("evidence_detail", ""),
+                "owner":           self.determine_owner_team(
+                                       finding.get("category", "Security"),
+                                       f_path
+                                   ),
+                "source":          finding.get("source", "sast"),
+            }, tech_stack))
+
+        # 3. CODE QUALITY / ARCHITECTURE — enriched with real file + LOC
+        for issue in code_review_issues:
+            f_path  = issue.get("file", "unknown")
+            l_no    = issue.get("line")
+            base_ttl = issue.get("title", issue.get("issue", ""))
+            enriched = enrich_title(base_ttl, f_path, l_no)
+            raw_recs.append(self.smart_engine.generate_recommendation({
+                "category":        issue.get("category", "Architecture"),
+                "severity":        issue.get("severity", "Medium"),
+                "file_path":       f_path,
+                "file":            f_path,
+                "line":            l_no,
+                "rule":            issue.get("rule", ""),
+                "issue":           enriched,
+                "title":           enriched,
+                "why":             issue.get("why", issue.get("description", "")),
+                "fix":             issue.get("suggestion", issue.get("fix", "")),
+                "evidence_detail": f"{f_path}" + (f" line {l_no}" if l_no else ""),
+                "owner":           self.determine_owner_team(
+                                       issue.get("category", "Architecture"),
+                                       f_path
+                                   ),
+                "source":          "code-quality",
+            }, tech_stack))
+
+        # 4. GROUNDED INFRASTRUCTURE INSIGHTS — CI missing, no README etc.
+        for insight in grounded_insights:
+            f_path = insight.get("file_path", "unknown")
+            raw_recs.append(self.smart_engine.generate_recommendation({
+                "category":        insight.get("category", "DevOps"),
+                "severity":        insight.get("severity", "High"),
+                "file_path":       f_path,
+                "file":            f_path,
+                "issue":           insight.get("issue", ""),
+                "title":           insight.get("issue", ""),
+                "why":             insight.get("why", ""),
+                "fix":             insight.get("fix_code", ""),
+                "evidence_detail": f"Missing in repository: {f_path}",
+                "owner":           self.determine_owner_team(
+                                       insight.get("category", "DevOps"),
+                                       f_path
+                                   ),
+                "source":          "infra-scanner",
+            }, tech_stack))
+
+        # 5. LLM QA TEST SUGGESTIONS — structured, file-specific tests only
         if llm_findings and "qa_suggestions" in llm_findings:
-            for r in llm_findings["qa_suggestions"].get("recommendations", []):
-                if r not in recs:
-                    recs.append(r)
+            for qa_rec in llm_findings["qa_suggestions"].get("suggested_tests", []):
+                if isinstance(qa_rec, dict) and qa_rec.get("file_path"):
+                    f_path   = qa_rec.get("file_path", "")
+                    test_name = qa_rec.get("test_name", "Untested Flow")
+                    raw_recs.append(self.smart_engine.generate_recommendation({
+                        "category":        "Testing",
+                        "severity":        "Medium",
+                        "file_path":       f_path,
+                        "file":            f_path,
+                        "issue":           f"Missing Test: {test_name} — {_os.path.basename(f_path)}",
+                        "title":           f"Missing Test: {test_name} — {_os.path.basename(f_path)}",
+                        "why":             qa_rec.get("description", ""),
+                        "fix":             qa_rec.get("mock_code", ""),
+                        "evidence_detail": f"Untested path in {f_path}",
+                        "owner":           "QA Team",
+                        "source":          "llm-qa",
+                    }, tech_stack))
+
+        # ── VALIDATE: enforce evidence, strip duplicates, sort by priority ─────
+        recs = self.smart_engine.validate_roadmap(raw_recs)
 
         scan_id = uuid.uuid4().hex
         
@@ -694,7 +1118,7 @@ class RepoIntelligence:
 
         # 6. Generate Pentest Intelligence
         update_progress(95, "Generating Attack Paths & Pentest Reports...")
-        pentest_platform = self.pentest_engine.generate_pentest_intelligence(repo_id, tech_stack, all_files)
+        pentest_platform = self.pentest_engine.generate_pentest_intelligence(repo_id, tech_stack, all_files, file_contents)
         if llm_findings and "pentest_findings" in llm_findings:
             custom_findings = llm_findings["pentest_findings"]
             for f in custom_findings:
@@ -772,8 +1196,255 @@ class RepoIntelligence:
         discovery_engine = ModelDiscoveryEngine()
         ai_intel_report = discovery_engine.discover_ai_components(file_contents, llm_override=llm_findings)
 
+        # ══════════════════════════════════════════════════════════════════
+        # ARCHITECTURE INTELLIGENCE ENGINE — all metrics from real scan data
+        # ══════════════════════════════════════════════════════════════════
+        import re as _re_arch
+
+        # ── 1. Classify every file into architectural roles ───────────────
+        def _classify_file(path: str) -> str:
+            p = path.lower()
+            if any(x in p for x in [".jsx", ".tsx", ".vue", ".html", ".css", ".scss", "frontend/", "client/", "ui/", "pages/", "components/"]):
+                return "frontend"
+            if any(x in p for x in ["test_", "_test.", "spec.", ".test.", ".spec.", "/tests/", "/test/", "/spec/"]):
+                return "tests"
+            if any(x in p for x in ["readme", ".md", "docs/", "documentation/", "wiki/", "changelog"]):
+                return "docs"
+            if any(x in p for x in ["script", "makefile", "dockerfile", "docker-compose", "setup.py", "setup.sh", ".sh", "manage.py"]):
+                return "scripts"
+            if any(x in p for x in ["config", ".env", ".yml", ".yaml", ".toml", ".ini", ".cfg", "settings", "requirements.txt", "package.json", "pyproject"]):
+                return "config"
+            return "backend"
+
+        def _classify_module(path: str) -> str:
+            p = path.lower()
+            if any(x in p for x in ["service", "svc"]):        return "Service"
+            if any(x in p for x in ["controller", "router", "route", "endpoint", "api"]):  return "Controller"
+            if any(x in p for x in ["repo", "repository", "dao", "store", "database", "db"]):  return "Repository"
+            if any(x in p for x in ["util", "helper", "common", "shared", "lib", "core"]):  return "Utility"
+            if any(x in p for x in ["model", "schema", "entity", "dto", "type"]):  return "Model"
+            if any(x in p for x in ["middleware", "guard", "auth", "permission", "jwt"]):  return "Middleware"
+            if any(x in p for x in ["test", "spec", "mock"]):  return "Test"
+            return "Module"
+
+        # ── 2. Build structure buckets ─────────────────────────────────────
+        structure_buckets: dict = {"frontend": [], "backend": [], "tests": [], "docs": [], "scripts": [], "config": []}
+        module_type_counts: dict = {}
+        file_loc_map: dict = {}  # file → line count
+
+        for path, content in file_contents.items():
+            bucket = _classify_file(path)
+            structure_buckets[bucket].append(path)
+            mod = _classify_module(path)
+            module_type_counts[mod] = module_type_counts.get(mod, 0) + 1
+            file_loc_map[path] = len(content.split("\n"))
+
+        # ── 3. Module, service, API, layer counts ──────────────────────────
+        total_modules = len(file_contents)
+        service_files = [p for p in file_contents if "service" in p.lower() or "svc" in p.lower()]
+        api_files = [p for p in file_contents if any(x in p.lower() for x in ["route", "router", "endpoint", "api", "controller"])]
+        distinct_dirs = set()
+        layer_dirs = set()
+        for path in all_files:
+            parts = path.replace("\\", "/").split("/")
+            if len(parts) > 1:
+                distinct_dirs.add(parts[0])
+            for part in parts[:-1]:
+                if any(x in part.lower() for x in ["service", "controller", "repo", "model", "util", "api", "core", "domain"]):
+                    layer_dirs.add(part.lower())
+
+        service_count = len(service_files)
+        api_count = len(api_files)
+        layer_count = max(1, len(layer_dirs))
+
+        # ── 4. Architecture confidence from structural signals ─────────────
+        confidence_signals = 0
+        if arch_type == "Microservices"        and service_count >= 3: confidence_signals += 30
+        elif arch_type == "Clean Architecture" and layer_count >= 3:   confidence_signals += 35
+        elif arch_type == "MVC Architecture"   and "models" in dirs and "controllers" in dirs: confidence_signals += 35
+        elif arch_type in ("Modular Monolith", "Monolith"):            confidence_signals += 20
+        if len(distinct_dirs) >= 3: confidence_signals += 20
+        if test_files:              confidence_signals += 15
+        if "config" in dirs or structure_buckets["config"]: confidence_signals += 10
+        if layer_count >= 2:        confidence_signals += 10
+        arch_confidence = min(99, max(50, confidence_signals))
+
+        # ── 5. Score breakdown — each sub-score derived from real data ─────
+        # Folder Organization: penalize flat repos (few dirs, many files)
+        ideal_files_per_dir = 8
+        actual_fpd = total_modules / max(1, folders_cnt)
+        folder_org_score = max(30, min(100, int(100 - max(0, actual_fpd - ideal_files_per_dir) * 3)))
+        folder_org_reason = (
+            f"Avg {actual_fpd:.1f} files/dir across {folders_cnt} directories"
+            if folders_cnt > 0 else "Repository has no subdirectory structure"
+        )
+
+        # Dependency Coupling: based on how dense dep_map is relative to files
+        coupling_density = len(dep_map) / max(1, total_modules)
+        dep_coupling_score = max(30, min(100, int(100 - coupling_density * 20)))
+        dep_coupling_reason = (
+            f"{len(dep_map)} dependency relationships across {total_modules} modules "
+            f"(density {coupling_density:.2f})"
+        )
+
+        # Module Separation: reward distinct module types
+        distinct_mod_types = len([v for v in module_type_counts.values() if v > 0])
+        mod_sep_score = min(100, max(30, distinct_mod_types * 12 + (15 if layer_count >= 3 else 0)))
+        mod_sep_reason = f"Detected {distinct_mod_types} distinct module types: {', '.join(list(module_type_counts.keys())[:5])}"
+
+        # Layer Boundaries: based on clear layer dirs
+        layer_score = min(100, max(30, layer_count * 18 + (10 if arch_type != "Monolith" else 0)))
+        layer_reason = (
+            f"Detected {layer_count} architectural layers: {', '.join(list(layer_dirs)[:6]) or 'root-level only'}"
+        )
+
+        # Circular Dependency Health
+        has_circular = len(circular) > 0
+        circular_health = 100 if not has_circular else max(30, 100 - len(circular) * 25)
+        circular_reason = (
+            f"No circular dependencies detected across {total_modules} modules"
+            if not has_circular else
+            f"{len(circular)} circular dependency chain(s) detected: {', '.join(circular[:3])}"
+        )
+
+        score_breakdown = {
+            "folder_organization":  {"score": folder_org_score,  "reason": folder_org_reason},
+            "dependency_coupling":  {"score": dep_coupling_score, "reason": dep_coupling_reason},
+            "module_separation":    {"score": mod_sep_score,      "reason": mod_sep_reason},
+            "layer_boundaries":     {"score": layer_score,        "reason": layer_reason},
+            "circular_health":      {"score": circular_health,    "reason": circular_reason},
+        }
+
+        # ── 6. Architecture Risks — derived from real analysis only ────────
+        arch_risks = []
+
+        if has_circular:
+            for c in circular[:5]:
+                arch_risks.append({
+                    "type": "Circular Dependency", "severity": "Critical",
+                    "file": c, "detail": f"Circular import detected: {c}",
+                    "fix": "Introduce an abstraction layer or inversion-of-control to break the cycle."
+                })
+
+        # God Module: any file >500 lines
+        god_modules = [(p, loc) for p, loc in file_loc_map.items() if loc > 500]
+        for gf, gloc in sorted(god_modules, key=lambda x: -x[1])[:5]:
+            arch_risks.append({
+                "type": "God Module", "severity": "High",
+                "file": gf, "detail": f"`{gf.split('/')[-1]}` is {gloc} lines — single-responsibility principle violated.",
+                "fix": "Split into focused sub-modules (target: < 300 lines per file)."
+            })
+
+        # Tight Coupling: any node in dep_map with 5+ connections
+        dep_out_degree: dict = {}
+        for edge in dep_map:
+            dep_out_degree[edge.get("from", "")] = dep_out_degree.get(edge.get("from", ""), 0) + 1
+        for f, degree in sorted(dep_out_degree.items(), key=lambda x: -x[1])[:3]:
+            if degree >= 5:
+                arch_risks.append({
+                    "type": "Tight Coupling", "severity": "Medium",
+                    "file": f, "detail": f"`{f.split('/')[-1]}` has {degree} outbound dependencies — high coupling.",
+                    "fix": "Apply Dependency Inversion Principle; extract interfaces."
+                })
+
+        # Oversized Directory: any directory that contains > 30% of all files
+        dir_file_counts: dict = {}
+        for path in all_files:
+            d = path.replace("\\", "/").split("/")[0]
+            dir_file_counts[d] = dir_file_counts.get(d, 0) + 1
+        for d, cnt in dir_file_counts.items():
+            if cnt / max(1, files_cnt) > 0.40 and cnt > 10:
+                arch_risks.append({
+                    "type": "Oversized Service", "severity": "Medium",
+                    "file": d + "/", "detail": f"Directory `{d}/` contains {cnt} files ({int(cnt/max(1,files_cnt)*100)}% of codebase).",
+                    "fix": "Break into sub-packages with explicit public APIs."
+                })
+
+        # Layer Violation: test files importing from config, or frontend importing backend
+        layer_violation_detected = False
+        for path, content in file_contents.items():
+            if "test" in path.lower() and _re_arch.search(r"import.*config|from config", content, _re_arch.IGNORECASE):
+                if not layer_violation_detected:
+                    arch_risks.append({
+                        "type": "Layer Violation", "severity": "Low",
+                        "file": path, "detail": f"Test file `{path.split('/')[-1]}` imports directly from config layer.",
+                        "fix": "Use dependency injection or test fixtures instead of direct config imports."
+                    })
+                    layer_violation_detected = True
+
+        # ── 7. Architecture Strengths — derived from actual signals ────────
+        arch_strengths = []
+        if test_files:
+            arch_strengths.append(f"Test suite present: {len(test_files)} test file(s) covering {coverage}% of code")
+        if structure_buckets["docs"]:
+            arch_strengths.append(f"Documentation maintained: {len(structure_buckets['docs'])} doc file(s) detected")
+        if not has_circular:
+            arch_strengths.append("No circular dependencies detected — clean module graph")
+        if structure_buckets["config"]:
+            arch_strengths.append(f"Configuration separated: {len(structure_buckets['config'])} config file(s) isolated")
+        if distinct_mod_types >= 3:
+            arch_strengths.append(f"Clear role separation: {distinct_mod_types} module types identified")
+        if arch_type not in ("Monolith",):
+            arch_strengths.append(f"{arch_type} pattern applied — enables independent service scaling")
+        if not arch_strengths:
+            arch_strengths.append("Repository structure scanned — no explicit strengths detected from file patterns")
+
+        # ── 8. Architecture Recommendations — from risks only ──────────────
+        arch_recs = []
+        for risk in arch_risks:
+            arch_recs.append({
+                "title": f"Fix {risk['type']}: {risk['file'].split('/')[-1]}",
+                "severity": risk["severity"],
+                "detail": risk["detail"],
+                "fix": risk["fix"],
+                "file": risk["file"],
+            })
+
+        # ── 9. Evolution Metrics ────────────────────────────────────────────
+        largest_modules = sorted(
+            [{"file": p, "lines": loc, "type": _classify_module(p)} for p, loc in file_loc_map.items()],
+            key=lambda x: -x["lines"]
+        )[:10]
+
+        most_connected = sorted(
+            [{"file": f, "connections": d, "type": _classify_module(f)} for f, d in dep_out_degree.items()],
+            key=lambda x: -x["connections"]
+        )[:8]
+
+        highest_coupling = sorted(
+            [{"directory": d, "file_count": cnt, "pct": round(cnt / max(1, files_cnt) * 100)}
+             for d, cnt in dir_file_counts.items()],
+            key=lambda x: -x["file_count"]
+        )[:6]
+
+        architecture_intelligence = {
+            "overview": {
+                "style":          arch_type,
+                "confidence":     arch_confidence,
+                "languages":      [x.capitalize() for x in langs if x],
+                "module_count":   total_modules,
+                "directory_count": folders_cnt,
+                "service_count":  service_count,
+                "api_count":      api_count,
+                "layer_count":    layer_count,
+                "test_file_count": len(test_files),
+            },
+            "score_breakdown": score_breakdown,
+            "risks":            arch_risks,
+            "structure":        {k: v[:20] for k, v in structure_buckets.items()},
+            "strengths":        arch_strengths,
+            "recommendations":  arch_recs[:8],
+            "evolution": {
+                "largest_modules":  largest_modules,
+                "most_connected":   most_connected,
+                "highest_coupling": highest_coupling,
+                "module_type_distribution": module_type_counts,
+            },
+        }
+
         return {
             "ai_intelligence": ai_intel_report,
+            "architecture_intelligence": architecture_intelligence,
             "repository_overview": {
                     "name": self.repo_name, "owner": self.owner, "branch": self.branch, "files": files_cnt, "folders": folders_cnt,
                     "languages": [x.capitalize() for x in langs if x], "tech_stack": tech_stack, "last_updated": self.last_updated,
@@ -835,12 +1506,12 @@ class RepoIntelligence:
                     "high": len([s for s in sast_findings if s.get('severity') == 'High']),
                     "medium": len([s for s in sast_findings if s.get('severity') == 'Medium']),
                     "low": len([s for s in sast_findings if s.get('severity') == 'Low']),
-                    "resolved": self.rng.randint(2, 10)
+                    "resolved": 0
                 }, 
                 "sast_findings": sast_findings, 
                 "secrets": secrets 
             },
-            "code_review_platform": self._generate_deterministic_code_review(sast_findings, code_review_issues, all_files),
+            "code_review_platform": self._generate_code_review(sast_findings, code_review_issues, all_files, file_contents),
             "qa_platform": self.qa_engine.generate_qa_intelligence(repo_id, files_cnt, test_files, all_files, file_contents, tech_stack, coverage, llm_override=llm_findings),
             "pentest_platform": pentest_platform,
             "repo_memory": repo_memory,

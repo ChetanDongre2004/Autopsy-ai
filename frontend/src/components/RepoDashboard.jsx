@@ -1,9 +1,12 @@
+import { BASE_URL } from "../api.js";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import ScoreGauge from "./ScoreGauge";
 import { FolderGit2, Star, GitFork, Clock, Activity, ShieldAlert, GitBranch, Share2, Download, FileJson, FileText, Zap, Layers, AlertTriangle, ShieldCheck, CheckCircle2, ChevronRight, Check, CheckCircle, XCircle, AlertOctagon, User, Calendar, MessageSquare, Cpu, Send, Terminal, FileCode, Play, RefreshCw, HelpCircle, Info } from "lucide-react";
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip } from "recharts";
 import RecommendationCard from "./RecommendationCard";
+import ArchitectureIntelligence from "./ArchitectureIntelligence";
+import ArchitectureGraph from "./ArchitectureGraph";
 import ReactFlow, { Background, Controls, MiniMap, useNodesState, useEdgesState, MarkerType, Handle, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -281,7 +284,7 @@ function RepoCopilotGraph({ repoData }) {
   const handleNodeClick = async (nodePath) => {
     setDetailsLoading(true);
     try {
-      const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  // BASE_URL imported from src/api.js
       const repoName = repoData.repository_overview?.name || "local_project";
       const response = await fetch(`${BASE_URL}/api/v1/node/analyze`, {
         method: "POST",
@@ -315,7 +318,7 @@ function RepoCopilotGraph({ repoData }) {
     setChatLoading(true);
 
     try {
-      const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+      // BASE_URL imported from src/api.js
       const repoName = repoData.repository_overview?.name || "local_project";
       
       const payload = {
@@ -664,7 +667,7 @@ export default function RepoDashboard({ data }) {
   const fetchQueue = async () => {
       setQueueLoading(true);
       try {
-          const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+          // BASE_URL imported from src/api.js
           const res = await fetch(`${BASE_URL}/api/v1/github/governance/queue`);
           const d = await res.json();
           setReviewQueue(d.queue || []);
@@ -675,7 +678,7 @@ export default function RepoDashboard({ data }) {
   const fetchTasks = async () => {
       setTasksLoading(true);
       try {
-          const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+          // BASE_URL imported from src/api.js
           const res = await fetch(`${BASE_URL}/api/v1/github/governance/tasks`);
           const d = await res.json();
           setTasks(d.tasks || []);
@@ -690,7 +693,7 @@ export default function RepoDashboard({ data }) {
 
   const handleDecision = async (id, decision) => {
       try {
-          const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+          // BASE_URL imported from src/api.js
           await fetch(`${BASE_URL}/api/v1/github/governance/review`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -831,7 +834,13 @@ export default function RepoDashboard({ data }) {
       )}
 
       {activeTab === "copilot" && (
-          <RepoCopilotGraph repoData={repoData} />
+          <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Repository Digital Twin — Architecture Graph</span>
+              <span className="ml-auto text-[9px] text-zinc-700 italic">Click any layer to inspect • Ask the architect assistant</span>
+            </div>
+            <ArchitectureGraph repoData={repoData} />
+          </div>
       )}
 
       {/* 1. REPOSITORY HEADER & EXPORT CENTER */}
@@ -920,46 +929,39 @@ export default function RepoDashboard({ data }) {
         </motion.div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 5. CODE ARCHITECTURE */}
-        <motion.div variants={itemVars} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col">
-           <h2 className="text-xs uppercase tracking-widest text-zinc-500 font-bold mb-4 flex items-center gap-2"><Layers className="w-4 h-4 text-purple-400"/> Architecture Intelligence</h2>
-           
-           <div className="flex gap-4 mb-4 bg-zinc-800/40 p-4 rounded-xl border border-zinc-700/30">
-              <div className="flex-1">
-                 <div className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Detected Pattern</div>
-                 <div className="text-lg font-black text-purple-400">{repoData.architecture.type}</div>
-              </div>
-              <div className="w-px bg-zinc-700"></div>
-              <div className="flex-1">
-                 <div className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Architecture Score</div>
-                 <div className="text-lg font-black text-white">{repoData.architecture.score}/100</div>
-              </div>
-           </div>
+      {/* ARCHITECTURE INTELLIGENCE — full width */}
+      <motion.div variants={itemVars} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-6">
+         <div className="flex items-center gap-2">
+           <Layers className="w-4 h-4 text-purple-400"/>
+           <h2 className="text-xs uppercase tracking-widest text-zinc-500 font-bold">Architecture Intelligence</h2>
+         </div>
+         <ArchitectureIntelligence data={repoData} />
+      </motion.div>
 
-           <div className="bg-zinc-950/40 border border-zinc-800/50 p-4 rounded-xl mb-4">
-              <p className="text-xs text-zinc-400 leading-relaxed">{repoData.architecture.explanation}</p>
-           </div>
-
-           <div className="grid grid-cols-2 gap-4 mt-auto">
-              <div className="space-y-2">
-                 <h3 className="text-[10px] font-bold text-green-500 uppercase tracking-wider mb-2">Platform Strengths</h3>
-                 {repoData.architecture.strengths?.map((s,i) => <div key={i} className="text-[11px] text-zinc-300 flex gap-1.5"><ShieldCheck className="w-3 h-3 text-green-500/50 shrink-0 mt-0.5"/> <span>{s}</span></div>)}
-              </div>
-              <div className="space-y-2">
-                 <h3 className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2">Structural Weaknesses</h3>
-                 {repoData.architecture.issues?.map((w,i) => <div key={i} className="text-[11px] text-zinc-300 flex gap-1.5"><AlertTriangle className="w-3 h-3 text-red-500/50 shrink-0 mt-0.5"/> <span>{w}</span></div>)}
-              </div>
-           </div>
-        </motion.div>
+      <div className="grid grid-cols-1 gap-6">
 
         {/* 6. RECOMMENDATIONS ENGINE */}
         <motion.div variants={itemVars} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6">
-           <h2 className="text-xs uppercase tracking-widest text-zinc-500 font-bold mb-4">Consultant Action Roadmap</h2>
+           <div className="flex items-center justify-between mb-4">
+             <h2 className="text-xs uppercase tracking-widest text-zinc-500 font-bold">Consultant Action Roadmap</h2>
+             {repoData.recommendations?.length > 0 && (
+               <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                 {repoData.recommendations.length} findings · evidence-driven
+               </span>
+             )}
+           </div>
            <div className="space-y-4 overflow-y-auto max-h-[600px] custom-scrollbar pr-2">
-             {repoData.recommendations?.map((rec, i) => (
-                <RecommendationCard key={i} rec={rec} index={i} />
-             ))}
+             {repoData.recommendations?.length > 0 ? (
+               repoData.recommendations.map((rec, i) => (
+                 <RecommendationCard key={i} rec={rec} index={i} />
+               ))
+             ) : (
+               <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                 <CheckCircle2 className="w-12 h-12 text-green-500/40" />
+                 <p className="text-sm font-bold text-zinc-400">No actionable recommendations generated from repository analysis.</p>
+                 <p className="text-xs text-zinc-600 max-w-xs">The scanner found no qualifying findings to generate roadmap items from. This repository has a clean analysis result.</p>
+               </div>
+             )}
            </div>
         </motion.div>
       </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PlayCircle, ShieldAlert, Activity, Bug, CheckCircle2, XCircle, AlertTriangle, Box, Fingerprint, Terminal, Zap, FileText, BarChart3, RotateCcw, Monitor, Smartphone, Globe, Settings, Network, History, Map as MapIcon, Database, HardDrive, Clock, Search, Filter, Server, Laptop, ChevronRight, Layers, Plus, Trash2, Edit2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { BASE_URL } from "../api.js";
 import { AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart as RechartsPie, Pie, CartesianGrid, LineChart, Line } from 'recharts';
 
 export default function QaAutomationDashboard({ data }) {
@@ -23,7 +24,7 @@ export default function QaAutomationDashboard({ data }) {
 
     const fetchSchedules = async () => {
         try {
-            const res = await fetch('http://127.0.0.1:8000/api/qa/schedules');
+            const res = await fetch(`${BASE_URL}/api/qa/schedules`);
             if (res.ok) {
                 setSchedules(await res.json());
             }
@@ -36,7 +37,7 @@ export default function QaAutomationDashboard({ data }) {
         e.preventDefault();
         setIsSaving(true);
         try {
-            const res = await fetch('http://127.0.0.1:8000/api/qa/schedules', {
+            const res = await fetch(`${BASE_URL}/api/qa/schedules`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newSchedule)
@@ -54,14 +55,14 @@ export default function QaAutomationDashboard({ data }) {
 
     const toggleSchedule = async (id) => {
         try {
-            await fetch(`http://127.0.0.1:8000/api/qa/schedules/${id}/toggle`, { method: 'POST' });
+            await fetch(`${BASE_URL}/api/qa/schedules/${id}/toggle`, { method: 'POST' });
             await fetchSchedules();
         } catch (e) {}
     };
 
     const deleteSchedule = async (id) => {
         try {
-            await fetch(`http://127.0.0.1:8000/api/qa/schedules/${id}`, { method: 'DELETE' });
+            await fetch(`${BASE_URL}/api/qa/schedules/${id}`, { method: 'DELETE' });
             await fetchSchedules();
         } catch (e) {}
     };
@@ -69,7 +70,7 @@ export default function QaAutomationDashboard({ data }) {
     const runSchedule = async (id) => {
         setIsExecuting('schedule');
         try {
-            await fetch(`http://127.0.0.1:8000/api/qa/schedules/${id}/run`, { method: 'POST' });
+            await fetch(`${BASE_URL}/api/qa/schedules/${id}/run`, { method: 'POST' });
             setTimeout(() => setIsExecuting(false), 2000);
         } catch (e) {
             setIsExecuting(false);

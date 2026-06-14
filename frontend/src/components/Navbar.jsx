@@ -13,7 +13,7 @@ export default function Navbar() {
     { name: "AI Code Review Platform", path: "/products/review", icon: <Code2 className="w-5 h-5 text-indigo-400"/>, desc: "Senior-level multi-language code review." },
     { name: "QA Automation Platform", path: "/products/qa", icon: <Zap className="w-5 h-5 text-amber-400"/>, desc: "Auto-generate tests and edge cases." },
     { name: "Pentesting Platform", path: "/products/pentest", icon: <Target className="w-5 h-5 text-orange-400"/>, desc: "API hitting, fuzzing, and auth abuse." },
-    { name: "AMD AI Acceleration Hub", path: "/products/amd-ai-hub", icon: <Cpu className="w-5 h-5 text-orange-400"/>, desc: "Local RAG Code Chat & Telemetry benchmarks." },
+    { name: "Repo AI Inspector", path: "/products/amd-ai-hub", icon: <Cpu className="w-5 h-5 text-orange-400"/>, desc: "Scan any repo to find AI models, map call locations, and analyze patterns." },
   ];
 
   return (

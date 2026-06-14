@@ -1,34 +1,46 @@
+import { BASE_URL } from "../api.js";
 import React, { useState } from "react";
 import { 
-  Cpu, Zap, Send, ShieldCheck, Terminal, Layers, CheckCircle2, 
-  RefreshCw, Eye, Search, AlertCircle, CheckCircle, Network, Info, 
-  Award, Settings, Copy, Check, ChevronRight, FileText, Database, 
+  Cpu, Send, ShieldCheck, Terminal, Layers, CheckCircle2, 
+  RefreshCw, Eye, Search, AlertCircle, CheckCircle, Network, Info,
+  Copy, Check, ChevronRight, FileText, Database, MapPin, Activity, Code,
   ShieldAlert, BookOpen, AlertTriangle 
 } from "lucide-react";
-import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
 import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
 import "reactflow/dist/style.css";
 
 export default function AmdAiHub({ data }) {
-  const [activeMainTab, setActiveMainTab] = useState("observability"); // "observability" or "playground"
-  const [activeSubTab, setActiveSubTab] = useState("overview"); 
-  const [activeInventoryTab, setActiveInventoryTab] = useState("models"); // "models" or "prompts"
+  const [activeMainTab, setActiveMainTab] = useState("observability");
+  const [activeSubTab, setActiveSubTab] = useState("overview");
+  const [activeInventoryTab, setActiveInventoryTab] = useState("models");
   const [query, setQuery] = useState("");
-  const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content: "Hello! I am Autopsy AI's offline code intelligence assistant running locally on your AMD hardware. Ask me anything about this repository's security, architecture, or potential refactorings."
-    }
-  ]);
+  const [messages, setMessages] = useState([{
+    role: "assistant",
+    content: "Hello! I am Autopsy AI's local code intelligence assistant. Ask me anything about this repository's security, architecture, or potential refactorings."
+  }]);
   const [loading, setLoading] = useState(false);
-  const [hardwareProfile] = useState("Ryzen AI NPU + Radeon ROCm (GPU)");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedHardware, setSelectedHardware] = useState("npu"); // "npu", "rocm", "cpu"
-  const [selectedQuant, setSelectedQuant] = useState("int4"); // "fp16", "int8", "int4"
   const [copiedText, setCopiedText] = useState("");
 
+  // Derive latency tier from provider name — no hardcoded numbers, purely categorical
+  const getLatencyProfile = (provider = "") => {
+    const p = provider.toLowerCase();
+    if (p.includes("openai") || p.includes("anthropic") || p.includes("claude"))
+      return { tier: "Cloud API", detail: "Network-bound, latency varies by region", badge: "bg-amber-500/10 border-amber-500/20 text-amber-400" };
+    if (p.includes("google") || p.includes("gemini"))
+      return { tier: "Cloud API", detail: "Network-bound, latency varies by region", badge: "bg-amber-500/10 border-amber-500/20 text-amber-400" };
+    if (p.includes("groq") || p.includes("together") || p.includes("fireworks"))
+      return { tier: "Inference API", detail: "Fast inference endpoint", badge: "bg-blue-500/10 border-blue-500/20 text-blue-400" };
+    if (p.includes("ollama") || p.includes("local") || p.includes("onnx") || p.includes("llama.cpp"))
+      return { tier: "On-Device (Local)", detail: "Low latency, fully offline", badge: "bg-green-500/10 border-green-500/20 text-green-400" };
+    if (p.includes("hugging") || p.includes("transformers"))
+      return { tier: "Self-Hosted", detail: "Moderate latency, self-managed", badge: "bg-teal-500/10 border-teal-500/20 text-teal-400" };
+    return { tier: "Unknown", detail: "Provider type not recognized", badge: "bg-zinc-800 border-zinc-700 text-zinc-400" };
+  };
+
   const repoName = data?.repository_overview?.name || "local_project";
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  // BASE_URL imported from src/api.js — uses Vite proxy in dev
 
   const handleCopy = (text) => {
     navigator.clipboard.writeText(text);
@@ -36,389 +48,21 @@ export default function AmdAiHub({ data }) {
     setTimeout(() => setCopiedText(""), 2000);
   };
 
-  // Check if real scanned AI intelligence data is present, otherwise load mock data
+  // Only use real scanned data. No mock fallback.
   const hasRealData = !!(data && data.ai_intelligence);
   
-  // Fallback / Sample dataset for the dashboard if no models detected or mock scan
-  const sampleData = {
-    models: [
-      {
-        model_name: "Gemini 2.5 Pro",
-        full_name: "Google Gemini 2.5 Pro",
-        provider: "Google",
-        version: "gemini-2.5-pro",
-        usage_location: "backend/services/analyzer.py:470",
-        file_path: "backend/services/analyzer.py",
-        class_name: "RepoIntelligence",
-        function_name: "run_full_analysis",
-        purpose: "Executive Summary & Architecture Quality Assessment",
-        input_type: "Repository Code Context & Chunks",
-        output_type: "CTO-level repository audit report",
-        evidence: "L470: response = await call_ai(system_prompt, user_message)\nL471: # Utilizing gemini-2.5-pro for high-reasoning summary",
-        confidence_score: 98
-      },
-      {
-        model_name: "Gemini 2.5 Flash",
-        full_name: "Google Gemini 2.5 Flash",
-        provider: "Google",
-        version: "gemini-2.5-flash",
-        usage_location: "backend/services/security_service.py:112",
-        file_path: "backend/services/security_service.py",
-        class_name: "SecurityScanner",
-        function_name: "scan_vulnerabilities",
-        purpose: "Security Findings Generation & Vulnerability Analysis",
-        input_type: "Source code chunks",
-        output_type: "Structured vulnerability findings",
-        evidence: "L112: model = genai.GenerativeModel('gemini-2.5-flash')\nL113: response = model.generate_content(prompt)",
-        confidence_score: 96
-      },
-      {
-        model_name: "Qwen 2.5 Coder",
-        full_name: "Alibaba Qwen 2.5 Coder 7B",
-        provider: "Alibaba (Local Ollama)",
-        version: "qwen2.5-coder",
-        usage_location: "backend/ai_helper.py:84",
-        file_path: "backend/ai_helper.py",
-        class_name: "LocalAIHelper",
-        function_name: "query_local_model",
-        purpose: "Privacy-first local code queries and RAG indexing check",
-        input_type: "User chat queries & retrieved source context",
-        output_type: "Local assistant responses",
-        evidence: "L84: client = openai.OpenAI(base_url='http://localhost:11434/v1')\nL85: response = client.chat.completions.create(model='qwen2.5-coder')",
-        confidence_score: 95
-      }
-    ],
-    embeddings: [
-      {
-        embedding_model: "BGE-Large-EN",
-        provider: "BAAI",
-        location: "backend/core/embedding_service.py:42",
-        file_path: "backend/core/embedding_service.py",
-        purpose: "Dense vector embedding generation for RAG chunk mapping",
-        evidence: "L42: self.model = SentenceTransformer('BAAI/bge-large-en')",
-        confidence_score: 95
-      }
-    ],
-    vector_dbs: [
-      {
-        vector_db: "Chroma DB",
-        location: "backend/services/kb_service.py:88",
-        file_path: "backend/services/kb_service.py",
-        purpose: "Vector collection index and similarity chunk database",
-        evidence: "L88: self.client = chromadb.PersistentClient(path='./.autopsy_cache')",
-        confidence_score: 92
-      }
-    ],
-    frameworks: [
-      {
-        framework: "LangChain",
-        version: "Detected in imports",
-        location: "backend/ai_helper.py:4",
-        file_path: "backend/ai_helper.py",
-        purpose: "LLM Orchestration, structured parser, and prompt pipeline bindings",
-        evidence: "L4: from langchain_core.prompts import ChatPromptTemplate",
-        confidence_score: 98
-      },
-      {
-        framework: "LangGraph",
-        version: "Detected in imports",
-        location: "backend/services/analyzer.py:12",
-        file_path: "backend/services/analyzer.py",
-        purpose: "Stateful agent workflow orchestration and task execution loop",
-        evidence: "L12: from langgraph.graph import StateGraph, END",
-        confidence_score: 95
-      }
-    ],
-    prompts: [
-      {
-        prompt_name: "system_prompt",
-        prompt_type: "System Prompt",
-        purpose: "CTO report formatting guidelines and constraints alignment",
-        usage_location: "backend/services/analyzer.py:481",
-        file_path: "backend/services/analyzer.py",
-        prompt_complexity: "High",
-        variables: ["repo_context", "issue_list"],
-        evidence: "L481: system_prompt = (\nL482:     \"You are a Principal Software Architect...\"\nL483: )",
-        confidence_score: 90
-      },
-      {
-        prompt_name: "security_prompt",
-        prompt_type: "Prompt Template",
-        purpose: "Security findings scanning rules and grading rubric",
-        usage_location: "backend/services/security_service.py:65",
-        file_path: "backend/services/security_service.py",
-        prompt_complexity: "Medium",
-        variables: ["file_code", "severity_rules"],
-        evidence: "L65: security_prompt = PromptTemplate.from_template(\nL66:     \"Audit the following code for CVEs...\"\nL67: )",
-        confidence_score: 88
-      }
-    ],
-    capabilities: {
-      "GenAI": {
-        "detected": true,
-        "confidence": 98,
-        "evidence": "Found 3 LLM definitions in codebase.",
-        "explanation": "Repository utilizes Google Gemini and local Qwen models for code generation, vulnerability analysis, and summarization."
-      },
-      "RAG": {
-        "detected": true,
-        "confidence": 95,
-        "evidence": "Vector DB (Chroma DB) and Embeddings (BGE-Large-EN) detected in service scripts.",
-        "explanation": "Codebase parses, chunks, embeds, and stores repository contexts locally, performing semantic retrieval for LLM queries."
-      },
-      "Agentic": {
-        "detected": true,
-        "confidence": 90,
-        "evidence": "LangGraph imports and state-graph declarations found in controller scripts.",
-        "explanation": "Repository uses stateful agentic loops to routing, analyze, and grade security and architecture findings."
-      },
-      "Multi-Model": {
-        "detected": true,
-        "confidence": 94,
-        "evidence": "Found both Google Gemini and Alibaba Qwen in active use.",
-        "explanation": "System splits reasoning workloads, leveraging high-tier Gemini for final summaries and faster local Qwen for code chatbot queries."
-      },
-      "Computer Vision": {
-        "detected": false,
-        "confidence": 0,
-        "evidence": "Evidence not found in repository.",
-        "explanation": "No visual libraries (PIL, OpenCV) or visual models are imported or active."
-      },
-      "Speech AI": {
-        "detected": false,
-        "confidence": 0,
-        "evidence": "Evidence not found in repository.",
-        "explanation": "No speech-to-text, audio analysis, or voice agents are detected."
-      },
-      "Multimodal": {
-        "detected": true,
-        "confidence": 95,
-        "evidence": "Gemini models configured inside backend services.",
-        "explanation": "Repository makes use of multimodal Gemini APIs which naturally support image, text, and structure inputs."
-      }
-    },
-    suitability_report: [
-      {
-        model_name: "Google Gemini 2.5 Pro",
-        suitability_score: 98,
-        compatibility_score: 100,
-        strengths: ["2-Million Token Context Window", "CTO-level repository reasoning", "Highly accurate JSON/schema structure extraction", "Exemplary code repair generation"],
-        weaknesses: ["Cloud API dependency (no offline option)", "API rate limits under heavy concurrent analysis"],
-        alternatives: ["Claude 3.5 Sonnet", "DeepSeek Coder (Offline)"],
-        recommendation: "Model selection is highly optimal for repository analysis.",
-        reasoning: "Scored 98/100. This choice represents a top-tier alignment with repository code complexity.",
-        hardware_acceleration: {
-          npu_support: "Supported via Cloud Gateway execution (runs on AMD Zen Core network layer)",
-          rocm_support: "Supported via Cloud Gateway API (0% Local GPU VRAM usage)",
-          cpu_support: "Optimized HTTPS JSON parsing (AMD AVX-512 accelerated SSL)",
-          status: "100% Compatible"
-        },
-        quantization_profiles: [
-          {"precision": "FP16 (Half)", "vram": "0 GB (Cloud Hosted)", "throughput": "N/A (Cloud)", "recommended": false},
-          {"precision": "INT8 (Integer)", "vram": "0 GB (Cloud Hosted)", "throughput": "N/A (Cloud)", "recommended": false},
-          {"precision": "INT4 (Quantized)", "vram": "0 GB (Cloud Hosted)", "throughput": "N/A (Cloud)", "recommended": false}
-        ],
-        accuracy_benchmarks: {
-          humaneval: "94.5%",
-          mbpp: "91.8%",
-          code_reasoning: "98/100",
-          hallucination_rate: "Very Low (<1.2%)",
-          precision_score: "100%"
-        },
-        optimization_pipeline: {
-          framework: "Google Vertex AI SDK / Direct API Gateway",
-          compilation_steps: "1. Initialize via google-generativeai SDK\n2. Secure API credentials in backend/.env\n3. Route requests through asynchronous connection pool",
-          compile_command: "pip install google-generativeai && export GEMINI_API_KEY='your_key'",
-          pytorch_rocm_script: "# Gemini 2.5 Pro runs on Cloud. No PyTorch ROCm script compilation required.",
-          onnx_npu_script: "# Gemini 2.5 Pro runs on Cloud. No ONNX Runtime NPU script required."
-        }
-      },
-      {
-        model_name: "Google Gemini 2.5 Flash",
-        suitability_score: 92,
-        compatibility_score: 100,
-        strengths: ["Sub-second API response times", "Very cost-effective billing tier", "Outstanding structural code scanning"],
-        weaknesses: ["Lacks deep multi-step architecture design reasoning compared to Pro"],
-        alternatives: ["GPT-4o-mini", "Qwen 2.5 Coder 7B (Offline)"],
-        recommendation: "Model selection is highly optimal for repository analysis.",
-        reasoning: "Scored 92/100. This choice represents a top-tier alignment with repository code complexity.",
-        hardware_acceleration: {
-          npu_support: "Supported via Cloud Gateway execution",
-          rocm_support: "Supported via Cloud Gateway API (0% Local GPU VRAM)",
-          cpu_support: "Optimized HTTPS JSON parsing",
-          status: "100% Compatible"
-        },
-        quantization_profiles: [
-          {"precision": "FP16 (Half)", "vram": "0 GB (Cloud Hosted)", "throughput": "N/A (Cloud)", "recommended": false},
-          {"precision": "INT8 (Integer)", "vram": "0 GB (Cloud Hosted)", "throughput": "N/A (Cloud)", "recommended": false},
-          {"precision": "INT4 (Quantized)", "vram": "0 GB (Cloud Hosted)", "throughput": "N/A (Cloud)", "recommended": false}
-        ],
-        accuracy_benchmarks: {
-          humaneval: "84.8%",
-          mbpp: "87.1%",
-          code_reasoning: "90/100",
-          hallucination_rate: "Low (<1.8%)",
-          precision_score: "100%"
-        },
-        optimization_pipeline: {
-          framework: "Google Vertex AI SDK / Direct API Gateway",
-          compilation_steps: "1. Initialize via GenerativeModel('gemini-2.5-flash')\n2. Configure max_output_tokens to match scan limits\n3. Run concurrent async queries",
-          compile_command: "python -c \"import google.generativeai as genai\"",
-          pytorch_rocm_script: "# Cloud API. No local ROCm setup required.",
-          onnx_npu_script: "# Cloud API. No local NPU setup required."
-        }
-      },
-      {
-        model_name: "Alibaba Qwen 2.5 Coder 7B",
-        suitability_score: 94,
-        compatibility_score: 100,
-        strengths: ["Highly optimized for low-latency coding chatbot interaction", "Excellent offline code scanning and repository-wide context reasoning", "Low hardware footprint (~4.8 GB VRAM at INT4)", "Active developer community with constant hardware updates"],
-        weaknesses: ["Slightly lower HumanEval score compared to Claude 3.5 Sonnet"],
-        alternatives: ["DeepSeek Coder", "Llama 3"],
-        recommendation: "Model selection is highly optimal for repository analysis.",
-        reasoning: "Scored 94/100. This choice represents a top-tier alignment with repository code complexity.",
-        hardware_acceleration: {
-          npu_support: "Native compatibility via ONNX Runtime & XDNA DirectML execution provider",
-          rocm_support: "Native ROCm compilation (Direct execution via PyTorch ROCm kernels)",
-          cpu_support: "Optimized via AVX-512 / ZenDNN instruction vectorization",
-          status: "100% Compatible"
-        },
-        quantization_profiles: [
-          {"precision": "FP16 (Half)", "vram": "14.9 GB", "throughput": "120 tok/s (Radeon GPU)", "recommended": false},
-          {"precision": "INT8 (Integer)", "vram": "8.2 GB", "throughput": "144 tok/s (Radeon GPU)", "recommended": false},
-          {"precision": "INT4 (Quantized)", "vram": "4.7 GB", "throughput": "62 tok/s (Ryzen AI NPU)", "recommended": true}
-        ],
-        accuracy_benchmarks: {
-          humaneval: "88.4%",
-          mbpp: "88.9%",
-          code_reasoning: "93/100",
-          hallucination_rate: "Very Low (<1.6%)",
-          precision_score: "100%"
-        },
-        optimization_pipeline: {
-          framework: "AMD Olive / HuggingFace Optimum-AMD",
-          compilation_steps: "1. Run optimum-cli to convert PyTorch model to ONNX\n2. Apply Olive pipeline with INT4 quantization config\n3. Execute using ONNX Runtime with DirectML Execution Provider",
-          compile_command: "optimum-cli export onnx --model Qwen/Qwen2.5-Coder-7B-Instruct --task text-generation-with-past qwen_onnx/",
-          pytorch_rocm_script: "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1\npython -c \"import torch; print('ROCm available:', torch.cuda.is_available())\"",
-          onnx_npu_script: "pip install onnxruntime-directml olive-ai"
-        }
-      }
-    ],
-    architecture_quality_score: 93,
-    rag_intelligence: {
-      has_rag: true,
-      chunk_size: 500,
-      chunk_overlap: 50,
-      chunk_strategy: "Recursive Character Splitting",
-      vector_store: "Chroma DB",
-      embedding_model: "BGE-Large-EN",
-      maturity: "Intermediate RAG pipeline",
-      maturity_score: 75,
-      evidence: [
-        "Detected chunk_size=500 in backend/core/embedding_service.py",
-        "Chroma PersistentClient loaded in backend/services/kb_service.py"
-      ],
-      weaknesses: [
-        "Extremely small chunk overlap (less than 10% of chunk size) detected. Risk of losing context boundary tokens."
-      ],
-      recommendations: [
-        "Increase chunk overlap to 10-20% of chunk size (e.g. 100 characters).",
-        "Integrate a cross-encoder Reranking model (e.g. Cohere Rerank or local BAAI/bge-reranker-large) to optimize context relevance."
-      ]
-    },
-    agentic_intelligence: {
-      has_agentic: true,
-      tools: ["scan_cves", "repair_syntax", "query_db"],
-      planning: "Multi-step stateful planning loops",
-      memory: "Persistent Checkpoint Memory (SQLite DB)",
-      routing: "Stateful Workflow DAG (LangGraph)",
-      maturity: "Advanced Agentic AI Architecture",
-      maturity_score: 90,
-      evidence: [
-        "LangGraph 'StateGraph' instantiated in backend/services/analyzer.py",
-        "MemorySaver checkpoint provider imported in backend/services/analyzer.py"
-      ],
-      weaknesses: [
-        "Single orchestrator node creates a logical bottleneck for large parallel scan scopes."
-      ],
-      recommendations: [
-        "Incorporate a Critic/Reflection loop node to allow self-assessment of generated outputs before return."
-      ]
-    },
-    gpu_intelligence: {
-      total_fp16_vram: "14.9 GB",
-      total_int8_vram: "8.2 GB",
-      total_int4_vram: "4.7 GB",
-      local_model_count: 1,
-      recommended_gpu: "AMD Radeon RX 7700 XT / 7800 XT (12GB/16GB VRAM)",
-      recommended_npu: "AMD Ryzen™ 9 HX 370 (50 TOPS NPU)",
-      inference_cost_per_1k_input: "$0.00 (Local Offline compute)",
-      inference_cost_per_1k_output: "$0.00 (Local Offline compute)",
-      rocm_optimization_advice: "1. Use FlashAttention-2 ROCm optimized kernels.\n2. Configure Hip-Graph execution to minimize latency overhead.\n3. Utilize PyTorch compilation (torch.compile) with ROCm backends.",
-      pytorch_rocm_setup: "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1"
-    },
-    application_flow: [
-      { step_num: 1, module: "Input Gateway", action: "User Goals ingestion & state mapping", evidence: "FastAPI RepoRequest router" },
-      { step_num: 2, module: "Agent Planner", action: "Routing and subtask planning using LLM reasoning", evidence: "Stateful Workflow DAG (LangGraph)" },
-      { step_num: 3, module: "Tool Execution Layer", action: "Invoke local functions or python bindings", evidence: "Defined tools: scan_cves, repair_syntax, query_db" },
-      { step_num: 4, module: "Memory Buffer", action: "Checkpoint state saved to SQLite/Memory", evidence: "Persistent Checkpoint Memory (SQLite DB)" },
-      { step_num: 5, module: "Reflection Critic", action: "Review generated outputs before return", evidence: "Self-correction validation loop" }
-    ],
-    data_flow_intelligence: {
-      databases: [
-        { database: "SQLite", file_path: "backend/services/kb_service.py", evidence: "Found 'sqlite3' connection parameters" }
-      ],
-      orms: [
-        { orm: "SQLAlchemy", file_path: "backend/services/kb_service.py", evidence: "Found 'sqlalchemy.orm' imports" }
-      ],
-      erd: {
-        nodes: [
-          { id: "db_sqlite", type: "databaseNode", label: "SQLite DB", fields: ["connection_string", "pool_size"], file_path: "backend/services/kb_service.py" },
-          { id: "table_jobs", type: "tableNode", label: "Jobs Table", fields: ["id", "status", "progress", "stage", "result", "error", "updated_at"], file_path: "backend/services/kb_service.py" }
-        ],
-        edges: [
-          { id: "rel_table_jobs_in_db_sqlite", source: "table_jobs", target: "db_sqlite", type: "STORED_IN" }
-        ]
-      }
-    },
-    governance_report: {
-      risk_score: 85,
-      eu_ai_act_classification: "Limited Risk",
-      eu_ai_act_explanation: "System uses Generative AI (LLMs) requiring transparency: users must be notified they are interacting with AI.",
-      license_compliance: "MIT / Apache-2.0 (Detected from manifest)",
-      license_compatibility: "Compatible (Open source dependencies align with license standards)",
-      data_privacy_issues: ["PII data might be transmitted to cloud APIs without scrubbing (e.g. emails in logs)."],
-      regulatory_recommendations: [
-        "Ensure user notification banner is active for all LLM chat sessions.",
-        "Introduce an anonymization middleware to strip emails/keys from logs before sending payloads to external cloud LLM gateways."
-      ]
-    },
-    graph: {
-      nodes: [
-        { id: "model_gemini_2_5_pro", type: "modelNode", data: { label: "Gemini 2.5 Pro", provider: "Google", purpose: "Executive Summary" } },
-        { id: "model_gemini_2_5_flash", type: "modelNode", data: { label: "Gemini 2.5 Flash", provider: "Google", purpose: "Security Scan" } },
-        { id: "model_qwen_2_5_coder", type: "modelNode", data: { label: "Qwen 2.5 Coder", provider: "Alibaba (Local)", purpose: "Local chat" } },
-        { id: "vector_db_chroma_db", type: "databaseNode", data: { label: "Chroma DB", purpose: "Vector chunk store" } },
-        { id: "embedding_bge_large_en", type: "embeddingNode", data: { label: "BGE-Large-EN", provider: "BAAI" } },
-        { id: "prompt_system_prompt", type: "promptNode", data: { label: "system_prompt", type: "System Prompt", complexity: "High" } },
-        { id: "prompt_security_prompt", type: "promptNode", data: { label: "security_prompt", type: "Prompt Template", complexity: "Medium" } },
-        { id: "agent_core_orchestrator", type: "agentNode", data: { label: "Core AI Agent Orchestrator", routing: "Stateful Workflow DAG", planning: "Multi-step stateful planning loops" } },
-        { id: "tool_scan_cves", type: "toolNode", data: { label: "Tool: scan_cves", purpose: "Vulnerability detection" } }
-      ],
-      edges: [
-        { id: "edge_gemini_pro_used_in_analyzer", source: "model_gemini_2_5_pro", target: "file_analyzer", label: "USED_IN" },
-        { id: "edge_gemini_flash_used_in_sec", source: "model_gemini_2_5_flash", target: "file_security_service", label: "USED_IN" },
-        { id: "edge_chroma_connected_to_analyzer", source: "vector_db_chroma_db", target: "file_analyzer", label: "CONNECTED_TO" },
-        { id: "edge_bge_feeds_chroma", source: "embedding_bge_large_en", target: "vector_db_chroma_db", label: "FEEDS" },
-        { id: "edge_sys_prompt_consumed_pro", source: "prompt_system_prompt", target: "model_gemini_2_5_pro", label: "CONSUMED_BY" },
-        { id: "edge_sec_prompt_consumed_flash", source: "prompt_security_prompt", target: "model_gemini_2_5_flash", label: "CONSUMED_BY" },
-        { id: "edge_agent_invokes_gemini_pro", source: "agent_core_orchestrator", target: "model_gemini_2_5_pro", label: "INVOKES" },
-        { id: "edge_agent_calls_scan_cves", source: "agent_core_orchestrator", target: "tool_scan_cves", label: "CALLS" }
-      ]
-    }
+  // Safe empty structure used when no scan data is available
+  const emptyIntelligence = {
+    models: [], embeddings: [], vector_dbs: [], frameworks: [], prompts: [],
+    capabilities: {}, suitability_report: [], rag_intelligence: { maturity_score: 0, maturity: "N/A", evidence: [], weaknesses: [], recommendations: [] },
+    agentic_intelligence: { maturity_score: 0, maturity: "N/A", tools: [], evidence: [], weaknesses: [], recommendations: [] },
+    gpu_intelligence: { total_int4_vram: "N/A", total_int8_vram: "N/A", total_fp16_vram: "N/A", local_model_count: 0 },
+    application_flow: [], data_flow_intelligence: { databases: [], orms: [], erd: { nodes: [], edges: [] } },
+    governance_report: { risk_score: 0, eu_ai_act_classification: "N/A", eu_ai_act_explanation: "", license_compliance: "N/A", license_compatibility: "N/A", data_privacy_issues: [], regulatory_recommendations: [] },
+    graph: { nodes: [], edges: [] }
   };
 
-  const aiIntelligence = hasRealData ? data.ai_intelligence : sampleData;
+  const aiIntelligence = hasRealData ? data.ai_intelligence : emptyIntelligence;
 
   // Recharts Model usage stats
   const modelTypeData = aiIntelligence.models.reduce((acc, curr) => {
@@ -557,7 +201,7 @@ export default function AmdAiHub({ data }) {
     } catch (err) {
       setMessages(prev => [...prev, { 
         role: "assistant", 
-        content: `⚠️ Failed to reach local AI inference server. Running simulation response: Based on the search key, no critical security concerns were found in this file segment. Ensure you have Ollama running at localhost:11434 with a model like qwen2.5-coder.` 
+        content: "⚠️ Unable to reach the local AI inference server. Please ensure Ollama is running at localhost:11434 with a model loaded (e.g. `ollama run qwen2.5-coder`)." 
       }]);
     } finally {
       setLoading(false);
@@ -572,11 +216,11 @@ export default function AmdAiHub({ data }) {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full text-xs font-bold text-orange-400 tracking-wider uppercase">
-              AMD Hardware AI Acceleration Hub
+              AI Model Scanner
             </div>
-            <h2 className="text-3xl font-black text-white tracking-tight">AI Repository Intelligence & Observability</h2>
+            <h2 className="text-3xl font-black text-white tracking-tight">Repo AI Inspector</h2>
             <p className="text-zinc-400 max-w-3xl text-sm font-medium leading-relaxed">
-              Analyze, reverse-engineer, and map the complete AI/ML architecture embedded in your repository code. Powered by AMD hardware acceleration pipelines.
+              Detects every AI model in your repository, maps exactly where it is called in code, classifies its latency profile, and surfaces architectural patterns — all from real scan data.
             </p>
           </div>
           <div className="flex items-center gap-3 bg-zinc-950/80 px-5 py-3.5 border border-zinc-800 rounded-2xl shadow-inner shrink-0">
@@ -598,7 +242,7 @@ export default function AmdAiHub({ data }) {
                 : "bg-zinc-900 hover:bg-zinc-855 text-zinc-400 hover:text-zinc-200 border border-zinc-800"
             }`}
           >
-            <Network className="w-4 h-4" /> AI Architecture Observatory
+            <Network className="w-4 h-4" /> Architecture Scanner
           </button>
           <button 
             onClick={() => setActiveMainTab("playground")}
@@ -608,7 +252,7 @@ export default function AmdAiHub({ data }) {
                 : "bg-zinc-900 hover:bg-zinc-855 text-zinc-400 hover:text-zinc-200 border border-zinc-800"
             }`}
           >
-            <Cpu className="w-4 h-4" /> Local Hardware Chat & Telemetry
+            <Cpu className="w-4 h-4" /> Local Code Chat
           </button>
         </div>
       </div>
@@ -619,10 +263,10 @@ export default function AmdAiHub({ data }) {
           <div className="xl:col-span-3 space-y-2">
             {[
               { id: "overview", label: "AI Architecture Overview" },
+              { id: "intelligence", label: "Model Intelligence" },
               { id: "inventory", label: "Model & Prompt Inventories" },
               { id: "rag", label: "RAG & Vector DB Intelligence" },
               { id: "agent", label: "Agentic AI Analyzer" },
-              { id: "gpu", label: "GPU Suitability & Optimization" },
               { id: "data", label: "Data Flow & ERD Analysis" },
               { id: "flow", label: "Application Flow Discovery" },
               { id: "graph", label: "Interactive Architecture Graph" },
@@ -642,26 +286,18 @@ export default function AmdAiHub({ data }) {
               </button>
             ))}
 
-            {/* QUICK HARDWARE BADGES */}
-            <div className="bg-zinc-900/20 border border-zinc-855 rounded-3xl p-5 mt-6 space-y-4">
-              <div className="text-xs font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2 flex items-center gap-2">
-                <Settings className="w-3.5 h-3.5" /> Engine Environment
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-bold">Local NPU EP:</span>
-                  <span className="text-green-400 font-bold">DirectML EP</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-bold">ROCm Acceleration:</span>
-                  <span className="text-green-400 font-bold">Enabled</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 font-bold">VRAM Reserved:</span>
-                  <span className="text-zinc-300 font-mono">~{aiIntelligence.gpu_intelligence?.total_int4_vram || "4.8 GB"}</span>
+            {/* Detected AI summary */}
+            {hasRealData && (
+              <div className="bg-zinc-900/20 border border-zinc-800 rounded-3xl p-5 mt-6 space-y-3">
+                <div className="text-xs font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2">Scan Summary</div>
+                <div className="space-y-2 text-xs font-semibold">
+                  <div className="flex justify-between"><span className="text-zinc-500">Models found:</span><span className="text-orange-400 font-bold">{aiIntelligence.models.length}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Prompts found:</span><span className="text-indigo-400 font-bold">{aiIntelligence.prompts.length}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Vector DBs:</span><span className="text-teal-400 font-bold">{aiIntelligence.vector_dbs.length}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Frameworks:</span><span className="text-emerald-400 font-bold">{aiIntelligence.frameworks.length}</span></div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* OBSERVABILITY MAIN CONTENT WORKSPACE */}
@@ -809,13 +445,11 @@ export default function AmdAiHub({ data }) {
                         </div>
                       </div>
                       <div className="bg-zinc-950/50 p-3.5 border border-zinc-850 rounded-2xl space-y-1">
-                        <div className="text-[9px] text-zinc-500 font-bold uppercase">Cloud Autonomy</div>
+                        <div className="text-[9px] text-zinc-500 font-bold uppercase">Local Models</div>
                         <div className="text-xs font-black text-zinc-300">
-                          {aiIntelligence.models.filter(m => m.provider.toLowerCase().includes("local") || m.provider.toLowerCase().includes("alibaba") || m.provider.toLowerCase().includes("ollama")).length > 0 ? "70%" : "0%"}
+                          {aiIntelligence.models.filter(m => (m.provider || "").toLowerCase().includes("local") || (m.provider || "").toLowerCase().includes("ollama") || (m.provider || "").toLowerCase().includes("onnx")).length}
                         </div>
-                        <div className="w-full bg-zinc-900 h-1 rounded-full overflow-hidden">
-                          <div className="bg-orange-500 h-1 rounded-full" style={{ width: aiIntelligence.models.filter(m => m.provider.toLowerCase().includes("local") || m.provider.toLowerCase().includes("alibaba") || m.provider.toLowerCase().includes("ollama")).length > 0 ? "70%" : "0%" }} />
-                        </div>
+                        <div className="text-[9px] text-zinc-600 font-medium">on-device models</div>
                       </div>
                     </div>
 
@@ -841,26 +475,26 @@ export default function AmdAiHub({ data }) {
                       <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">AMD Acceleration Suitability</span>
                     </div>
 
-                    <div className="flex items-center gap-5 bg-zinc-950/50 p-4 border border-zinc-850 rounded-2xl shadow-inner">
-                      {/* SPEEDOMETER WIDGET */}
-                      <div className="relative flex items-center justify-center shrink-0">
-                        <div className="w-20 h-20 rounded-full border-4 border-dashed border-orange-500/25 flex items-center justify-center">
-                          <div className="w-14 h-14 rounded-full bg-zinc-950 border border-zinc-850 flex flex-col items-center justify-center">
-                            <span className="text-lg font-black text-orange-500">{aiIntelligence.architecture_quality_score || 93}</span>
-                            <span className="text-[7px] text-zinc-500 font-bold uppercase">SCORE</span>
+                    {aiIntelligence.architecture_quality_score ? (
+                      <div className="flex items-center gap-5 bg-zinc-950/50 p-4 border border-zinc-850 rounded-2xl shadow-inner">
+                        <div className="relative flex items-center justify-center shrink-0">
+                          <div className="w-20 h-20 rounded-full border-4 border-dashed border-orange-500/25 flex items-center justify-center">
+                            <div className="w-14 h-14 rounded-full bg-zinc-950 border border-zinc-850 flex flex-col items-center justify-center">
+                              <span className="text-lg font-black text-orange-500">{aiIntelligence.architecture_quality_score}</span>
+                              <span className="text-[7px] text-zinc-500 font-bold uppercase">SCORE</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="space-y-1.5 text-xs font-semibold">
-                        <div className="text-[9px] text-zinc-500 font-bold uppercase">Architectural Quality:</div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                          <div className="flex justify-between text-zinc-400"><span className="text-[10px]">Modularity:</span><span className="text-zinc-200 font-bold">95%</span></div>
-                          <div className="flex justify-between text-zinc-400"><span className="text-[10px]">Offline Mode:</span><span className="text-zinc-200 font-bold">70%</span></div>
-                          <div className="flex justify-between text-zinc-400"><span className="text-[10px]">AMD NPU EP:</span><span className="text-green-400 font-bold">100%</span></div>
-                          <div className="flex justify-between text-zinc-400"><span className="text-[10px]">Safety Audit:</span><span className="text-zinc-200 font-bold">88%</span></div>
+                        <div className="space-y-1 text-xs font-semibold">
+                          <div className="text-[9px] text-zinc-500 font-bold uppercase">AI Architecture Quality Score</div>
+                          <div className="text-zinc-400 leading-relaxed">Computed from scan analysis based on detected patterns, model diversity, and architectural maturity.</div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="bg-zinc-950/50 p-4 border border-zinc-850 rounded-2xl text-xs text-zinc-500 font-semibold italic">
+                        Architecture quality score not yet computed. Run a full repository scan to generate this metric.
+                      </div>
+                    )}
 
                     {/* MINI DONUT DISTRIBUTION */}
                     <div className="space-y-2">
@@ -894,71 +528,182 @@ export default function AmdAiHub({ data }) {
                   </div>
                 </div>
 
-                {/* BOTTOM STRENGTHS, LIMITATIONS, RECOMMENDATIONS GRID */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {/* STRENGTHS */}
+                {/* CAPABILITIES DETECTED — real data from scan */}
+                {Object.keys(aiIntelligence.capabilities || {}).length > 0 && (
                   <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 shadow-md space-y-4">
-                    <h4 className="font-extrabold text-white text-xs uppercase tracking-wider flex items-center gap-1.5 border-b border-zinc-800/80 pb-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-400" /> Architectural Strengths
+                    <h4 className="font-extrabold text-white text-xs uppercase tracking-wider flex items-center gap-1.5 border-b border-zinc-800/80 pb-3">
+                      <CheckCircle2 className="w-4 h-4 text-orange-400" /> Detected AI Capabilities
                     </h4>
-                    <ul className="space-y-2.5 text-xs font-semibold text-zinc-300">
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 mt-1.5 shrink-0" />
-                        <span>Logical split between cloud (heavy reasoning) and local (privacy-first chat) inference engines.</span>
-                      </li>
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 mt-1.5 shrink-0" />
-                        <span>Stateful routing topology prevents loops and structures agentic loops.</span>
-                      </li>
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 mt-1.5 shrink-0" />
-                        <span>Native Ryzen NPU optimization potential via ONNX models.</span>
-                      </li>
-                    </ul>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {Object.entries(aiIntelligence.capabilities).map(([cap, info]) => (
+                        <div key={cap} className={`p-3 rounded-2xl border ${info?.detected ? "bg-orange-500/5 border-orange-500/20" : "bg-zinc-950/40 border-zinc-850 opacity-50"}`}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs font-black text-zinc-200">{cap}</span>
+                            {info?.detected
+                              ? <CheckCircle className="w-4 h-4 text-green-400" />
+                              : <AlertCircle className="w-4 h-4 text-zinc-600" />}
+                          </div>
+                          {info?.detected && info?.confidence && (
+                            <div className="w-full bg-zinc-900 h-1 rounded-full overflow-hidden mb-1.5">
+                              <div className="bg-orange-500 h-1 rounded-full" style={{ width: `${info.confidence}%` }} />
+                            </div>
+                          )}
+                          {info?.evidence && (
+                            <p className="text-[10px] text-zinc-500 font-medium leading-snug">{info.evidence}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
+              </div>
+            )}
 
-                  {/* WEAKNESSES */}
-                  <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 shadow-md space-y-4">
-                    <h4 className="font-extrabold text-white text-xs uppercase tracking-wider flex items-center gap-1.5 border-b border-zinc-800/80 pb-2">
-                      <AlertTriangle className="w-4 h-4 text-red-500" /> Detected Architecture Risks
-                    </h4>
-                    <ul className="space-y-2.5 text-xs font-semibold text-zinc-300">
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
-                        <span>Volatile in-memory sessions: missing checkpoint savers in SQLite DB.</span>
-                      </li>
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
-                        <span>External API routes lack PII filters, risking credential leaks.</span>
-                      </li>
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
-                        <span>Extremely low chunk overlap (50 chars) risks separating key boundaries.</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  {/* RECOMMENDATIONS */}
-                  <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 shadow-md space-y-4">
-                    <h4 className="font-extrabold text-white text-xs uppercase tracking-wider flex items-center gap-1.5 border-b border-zinc-800/80 pb-2">
-                      <Settings className="w-4 h-4 text-orange-400" /> AMD Deployment Action Plan
-                    </h4>
-                    <ul className="space-y-2.5 text-xs font-semibold text-zinc-300">
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 mt-1.5 shrink-0" />
-                        <span>Convert local Qwen 2.5 Coder to INT4 with AMD Olive compilation scripts.</span>
-                      </li>
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 mt-1.5 shrink-0" />
-                        <span>Deploy using ONNX DirectML EP, constraining local memory to 4.7 GB VRAM.</span>
-                      </li>
-                      <li className="flex gap-2 items-start">
-                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 mt-1.5 shrink-0" />
-                        <span>Incorporate disclosure notices for EU AI Act compliance checks.</span>
-                      </li>
-                    </ul>
-                  </div>
+            {/* MODEL INTELLIGENCE TAB */}
+            {activeSubTab === "intelligence" && (
+              <div className="space-y-6">
+                <div className="p-6 bg-zinc-900/40 border border-zinc-800/80 rounded-3xl shadow-md">
+                  <h3 className="text-lg font-bold text-zinc-200 flex items-center gap-2">
+                    <Cpu className="w-5 h-5 text-orange-500" /> Model Intelligence — Usage, Location & Latency
+                  </h3>
+                  <p className="text-xs text-zinc-500 font-semibold mt-1 leading-relaxed">
+                    Every AI model detected in your repository. Shows the exact file and function where it is called, provider-derived latency tier, and architectural recommendations from scan analysis. All data is extracted from your codebase — no hardcoded values.
+                  </p>
                 </div>
+
+                {aiIntelligence.models.length === 0 ? (
+                  <div className="p-10 text-center bg-zinc-900/20 border border-zinc-800/80 rounded-3xl">
+                    <Cpu className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
+                    <p className="text-zinc-500 font-semibold text-sm">No AI models detected in this repository.</p>
+                    <p className="text-xs text-zinc-600 mt-1">Scan a repository that uses LLM APIs or local inference models.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {aiIntelligence.models.map((model, idx) => {
+                      const latency = getLatencyProfile(model.provider);
+                      const suit = (aiIntelligence.suitability_report || []).find(r =>
+                        (r.model_name || "").toLowerCase().includes((model.model_name || "").toLowerCase()) ||
+                        (model.model_name || "").toLowerCase().includes((r.model_name || "").toLowerCase())
+                      );
+                      return (
+                        <div key={idx} className="relative bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 space-y-5 hover:border-zinc-700/60 transition overflow-hidden">
+                          <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-orange-500/0 via-orange-500/60 to-orange-500/0" />
+
+                          {/* Header */}
+                          <div className="flex flex-wrap justify-between items-start gap-3 border-b border-zinc-800 pb-4">
+                            <div>
+                              <h4 className="text-base font-black text-white">{model.model_name || model.full_name}</h4>
+                              <div className="text-[11px] text-zinc-500 font-mono mt-0.5">{model.full_name}</div>
+                            </div>
+                            <div className="flex flex-wrap gap-2 items-center">
+                              <span className="px-2.5 py-1 bg-orange-500/10 border border-orange-500/20 rounded-full text-xs font-bold text-orange-400">{model.provider}</span>
+                              <span className={`px-2.5 py-1 border rounded-full text-xs font-bold ${latency.badge}`}>{latency.tier}</span>
+                              <span className="px-2.5 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-xs font-bold text-green-400">{model.confidence_score}% confidence</span>
+                            </div>
+                          </div>
+
+                          {/* Location + Latency */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div className="space-y-2">
+                              <div className="text-[10px] text-zinc-500 font-black uppercase tracking-wider flex items-center gap-1.5">
+                                <MapPin className="w-3.5 h-3.5 text-orange-400" /> Call Location in Repository
+                              </div>
+                              <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-4 space-y-2.5 text-xs font-semibold">
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-zinc-500 shrink-0">File:</span>
+                                  <span className="text-orange-400 font-mono truncate text-right">{model.file_path || model.usage_location || "Not specified"}</span>
+                                </div>
+                                {model.class_name && model.class_name !== "None" && (
+                                  <div className="flex justify-between gap-2">
+                                    <span className="text-zinc-500 shrink-0">Class:</span>
+                                    <span className="text-zinc-300 font-mono">{model.class_name}</span>
+                                  </div>
+                                )}
+                                {model.function_name && (
+                                  <div className="flex justify-between gap-2">
+                                    <span className="text-zinc-500 shrink-0">Function:</span>
+                                    <span className="text-zinc-300 font-mono">{model.function_name}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-zinc-500 shrink-0">Purpose:</span>
+                                  <span className="text-zinc-300 text-right">{model.purpose}</span>
+                                </div>
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-zinc-500 shrink-0">I/O:</span>
+                                  <span className="text-zinc-300">{model.input_type} → {model.output_type}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="text-[10px] text-zinc-500 font-black uppercase tracking-wider flex items-center gap-1.5">
+                                <Activity className="w-3.5 h-3.5 text-orange-400" /> Latency & Deployment Profile
+                              </div>
+                              <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-4 space-y-2.5 text-xs font-semibold">
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-zinc-500">Tier:</span>
+                                  <span className={`font-bold ${latency.badge.includes("amber") ? "text-amber-400" : latency.badge.includes("green") ? "text-green-400" : latency.badge.includes("teal") ? "text-teal-400" : latency.badge.includes("blue") ? "text-blue-400" : "text-zinc-400"}`}>{latency.tier}</span>
+                                </div>
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-zinc-500">Profile:</span>
+                                  <span className="text-zinc-300 text-right">{latency.detail}</span>
+                                </div>
+                              </div>
+                              {suit && (
+                                <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-3 text-xs space-y-1.5">
+                                  <div className="text-[9px] text-zinc-500 font-black uppercase tracking-wider">Suitability Score (from scan)</div>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-2xl font-black text-orange-400">{suit.suitability_score}</span>
+                                    <div className="flex-1 bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                                      <div className="bg-orange-500 h-1.5 rounded-full" style={{ width: `${suit.suitability_score}%` }} />
+                                    </div>
+                                    <span className="text-zinc-500">/100</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Code Evidence */}
+                          {model.evidence && (
+                            <div className="space-y-2">
+                              <div className="text-[10px] text-zinc-500 font-black uppercase tracking-wider flex items-center gap-1.5">
+                                <Code className="w-3.5 h-3.5 text-orange-400" /> Code Evidence (Extracted from Repository)
+                              </div>
+                              <pre className="p-3 bg-zinc-950 border border-zinc-900 rounded-xl font-mono text-xs text-zinc-400 overflow-x-auto leading-relaxed whitespace-pre-wrap">{model.evidence}</pre>
+                            </div>
+                          )}
+
+                          {/* Suitability strengths / weaknesses from LLM */}
+                          {suit && (suit.strengths?.length > 0 || suit.weaknesses?.length > 0) && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-zinc-850">
+                              <div className="space-y-1.5">
+                                <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Strengths (scan analysis)</div>
+                                <ul className="space-y-1">{(suit.strengths || []).map((s, i) => <li key={i} className="flex gap-2 text-xs text-zinc-300"><span className="text-green-400 mt-0.5 shrink-0">•</span>{s}</li>)}</ul>
+                              </div>
+                              <div className="space-y-1.5">
+                                <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Limitations / Risks (scan analysis)</div>
+                                <ul className="space-y-1">{(suit.weaknesses || []).map((w, i) => <li key={i} className="flex gap-2 text-xs text-zinc-300"><span className="text-red-400 mt-0.5 shrink-0">•</span>{w}</li>)}</ul>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Recommendation from LLM */}
+                          {suit?.recommendation && (
+                            <div className="p-4 bg-zinc-950 border border-zinc-900 rounded-2xl text-xs space-y-1.5">
+                              <div className="text-[10px] text-zinc-500 font-black uppercase tracking-wider flex items-center gap-1.5">
+                                <Info className="w-3.5 h-3.5 text-orange-400" /> Architect Recommendation (from scan analysis)
+                              </div>
+                              <p className="text-zinc-300 font-semibold leading-relaxed">{suit.recommendation}</p>
+                              {suit.reasoning && <p className="text-zinc-500 font-medium leading-relaxed">{suit.reasoning}</p>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1359,8 +1104,8 @@ export default function AmdAiHub({ data }) {
               </div>
             )}
 
-            {/* SUB-PAGE 5: MODEL SUITABILITY & GPU OPTIMIZATION */}
-            {activeSubTab === "gpu" && (
+            {/* GPU tab removed — content merged into Model Intelligence tab above */}
+            {activeSubTab === "gpu_removed" && (
               <div className="space-y-6">
                 {/* ARCHITECTURE QUALITY SCORE HERO CARD */}
                 <div className="p-6 bg-gradient-to-r from-orange-950/20 via-zinc-900/40 to-zinc-950 border border-orange-500/20 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-6 shadow-xl animate-fade-in">
@@ -1943,103 +1688,32 @@ export default function AmdAiHub({ data }) {
       )}
 
       {activeMainTab === "playground" && (
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-          {/* LEFT COLUMN: TELEMETRY & HARDWARE DETAILS */}
-          <div className="xl:col-span-5 space-y-8">
-            {/* HARDWARE STATE */}
-            <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 shadow-lg space-y-5">
-              <h3 className="text-lg font-bold text-zinc-300 flex items-center gap-2 border-b border-zinc-800 pb-3">
-                <Cpu className="w-5 h-5 text-orange-500" /> Local Processing Telemetry
-              </h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center text-sm border-b border-zinc-850 pb-2">
-                  <span className="text-zinc-500 font-bold">Active Engine</span>
-                  <span className="text-zinc-300 font-mono text-xs">{hardwareProfile}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm border-b border-zinc-850 pb-2">
-                  <span className="text-zinc-500 font-bold">NPU Acceleration Status</span>
-                  <span className="flex items-center gap-1.5 text-green-400 font-bold text-xs">
-                    <CheckCircle2 className="w-4 h-4" /> Running (DirectML EP)
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-sm border-b border-zinc-850 pb-2">
-                  <span className="text-zinc-500 font-bold">Embedding Quantization</span>
-                  <span className="text-zinc-300 font-mono text-xs">INT4 / FP16 Hybrid</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-zinc-500 font-bold">Memory Footprint</span>
-                  <span className="text-zinc-300 font-bold">~4.8 GB VRAM / NPU Cache</span>
-                </div>
-              </div>
+        <div className="flex flex-col gap-8">
+          {/* INFO BANNER */}
+          <div className="p-5 bg-zinc-900/40 border border-zinc-800/80 rounded-3xl flex flex-col md:flex-row gap-5 items-start md:items-center">
+            <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-2xl text-orange-400 shrink-0">
+              <Cpu className="w-6 h-6" />
             </div>
-
-            {/* TELEMETRY CHART 1: INFERENCE RATE */}
-            <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 shadow-lg space-y-6">
-              <div className="space-y-1">
-                <h3 className="text-lg font-bold text-zinc-300 flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-orange-500" /> Model Throughput Benchmarks
-                </h3>
-                <p className="text-xs text-zinc-505 font-medium">Token generation speed (higher is better)</p>
-              </div>
-              <div className="h-44 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={[
-                    { name: "CPU (Zen 4)", rate: 22, color: "#71717a" },
-                    { name: "Ryzen AI NPU", rate: 58, color: "#f97316" },
-                    { name: "Radeon GPU (ROCm)", rate: 115, color: "#ea580c" }
-                  ]} layout="vertical">
-                    <XAxis type="number" stroke="#71717a" fontSize={11} label={{ value: "Tokens / Second", position: "insideBottom", offset: -2, fill: "#71717a", fontSize: 10 }} />
-                    <YAxis dataKey="name" type="category" stroke="#71717a" fontSize={11} width={80} />
-                    <Tooltip cursor={{ fill: "rgba(255,255,255,0.03)" }} />
-                    <Bar dataKey="rate" radius={[0, 6, 6, 0]}>
-                      {[
-                        { name: "CPU (Zen 4)", rate: 22, color: "#71717a" },
-                        { name: "Ryzen AI NPU", rate: 58, color: "#f97316" },
-                        { name: "Radeon GPU (ROCm)", rate: 115, color: "#ea580c" }
-                      ].map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+            <div className="space-y-1 flex-1">
+              <div className="text-sm font-black text-zinc-200">Local RAG Code Chat</div>
+              <p className="text-xs text-zinc-400 font-semibold leading-relaxed">
+                This chat is powered by your local Ollama instance. Questions are answered using your scanned repository's indexed code context via RAG. Requires <span className="text-orange-400 font-mono">ollama run qwen2.5-coder</span> running at <span className="font-mono text-zinc-300">localhost:11434</span>.
+              </p>
             </div>
-
-            {/* TELEMETRY CHART 2: POWER CONSUMPTION */}
-            <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-3xl p-6 shadow-lg space-y-6">
-              <div className="space-y-1">
-                <h3 className="text-lg font-bold text-zinc-300 flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-green-500" /> Energy Efficiency Comparison
-                </h3>
-                <p className="text-xs text-zinc-505 font-medium">Power utilization (Watts per 1K Tokens - lower is better)</p>
+            {hasRealData && aiIntelligence.models.filter(m => getLatencyProfile(m.provider).tier === "On-Device (Local)").length > 0 && (
+              <div className="shrink-0 text-right">
+                <div className="text-[10px] text-zinc-500 font-bold uppercase mb-1">Local Models Detected</div>
+                <div className="flex flex-wrap gap-1 justify-end">
+                  {aiIntelligence.models.filter(m => getLatencyProfile(m.provider).tier === "On-Device (Local)").map((m, i) => (
+                    <span key={i} className="px-2 py-0.5 bg-green-500/10 border border-green-500/20 text-green-400 rounded text-[10px] font-mono font-bold">{m.model_name}</span>
+                  ))}
+                </div>
               </div>
-              <div className="h-44 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={[
-                    { name: "CPU (Zen 4)", energy: 45, color: "#71717a" },
-                    { name: "Radeon GPU", energy: 85, color: "#ea580c" },
-                    { name: "Ryzen AI NPU", energy: 6.8, color: "#22c55e" }
-                  ]} layout="vertical">
-                    <XAxis type="number" stroke="#71717a" fontSize={11} label={{ value: "Power (Watts)", position: "insideBottom", offset: -2, fill: "#71717a", fontSize: 10 }} />
-                    <YAxis dataKey="name" type="category" stroke="#71717a" fontSize={11} width={80} />
-                    <Tooltip cursor={{ fill: "rgba(255,255,255,0.03)" }} />
-                    <Bar dataKey="energy" radius={[0, 6, 6, 0]}>
-                      {[
-                        { name: "CPU (Zen 4)", energy: 45, color: "#71717a" },
-                        { name: "Radeon GPU", energy: 85, color: "#ea580c" },
-                        { name: "Ryzen AI NPU", energy: 6.8, color: "#22c55e" }
-                      ].map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* RIGHT COLUMN: RAG CODEBASE CHAT */}
-          <div className="xl:col-span-7 flex flex-col h-[650px] bg-zinc-900/40 border border-zinc-800/80 rounded-3xl overflow-hidden shadow-lg">
+          {/* FULL-WIDTH CHAT */}
+          <div className="flex flex-col h-[650px] bg-zinc-900/40 border border-zinc-800/80 rounded-3xl overflow-hidden shadow-lg">
             <div className="p-5 border-b border-zinc-800/80 bg-zinc-900/20 flex justify-between items-center">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 bg-green-505 rounded-full animate-ping" />

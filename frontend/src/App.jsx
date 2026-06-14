@@ -1,3 +1,4 @@
+import { BASE_URL } from "./api.js";
 import React, { useState } from "react";
 import { Routes, Route, useNavigate, Navigate, useLocation } from "react-router-dom";
 import RepoDashboard from "./components/RepoDashboard";
@@ -29,7 +30,7 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = React.useRef(null);
   
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  // BASE_URL imported from src/api.js — uses Vite proxy in dev, env var in prod
   const location = useLocation();
 
 

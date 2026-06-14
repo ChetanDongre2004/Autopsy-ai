@@ -1,274 +1,191 @@
+"""
+Real QA Engine — generates quality analysis grounded in actual scanned files.
+No random data. Every metric derives from real file/test evidence.
+"""
 import uuid
-import random
-import os
-from collections import defaultdict
-from core.retrieval_service import RetrievalEngine
-from core.historical_memory import HistoricalMemory
-from services.kb_service import QAFlakyMemory, QAHistoricalFailures, QAReleaseScores
 import time
+import re
+import logging
+from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
+
 
 class QAEngine:
-    def __init__(self, kb_session, retrieval_engine: RetrievalEngine, rng: random.Random):
-        self.session = kb_session
+    def __init__(self, session, retrieval_engine, rng=None):
+        self.session = session
         self.retrieval_engine = retrieval_engine
         self.rng = rng
-        self.historical_memory = HistoricalMemory(kb_session)
 
-    def generate_qa_intelligence(self, repo_id: str, files_cnt: int, test_files: list, all_files: list, file_contents: dict, tech_stack: dict, coverage: int, llm_override: dict = None):
-        # 1. Analyze repository structure for intelligent test detection
-        api_routes = []
-        ui_components = []
-        auth_flows = []
-        critical_logic = []
-        
-        for file_path, content in file_contents.items():
-            content_lower = content.lower()
-            if 'app.get' in content_lower or 'router.post' in content_lower or '@app.route' in content_lower or 'express.router' in content_lower:
-                api_routes.append(file_path)
-            if 'login' in content_lower or 'auth' in content_lower or 'jwt' in content_lower or 'passport' in content_lower:
-                auth_flows.append(file_path)
-            if 'components/' in file_path.lower() or 'pages/' in file_path.lower() or file_path.endswith(('.jsx', '.tsx', '.vue')):
-                ui_components.append(file_path)
-            if 'payment' in content_lower or 'billing' in content_lower or 'checkout' in content_lower:
-                critical_logic.append(file_path)
-        
-        # 2. Query KB for missing tests & risky areas
-        risky_chunks = []
-        try:
-            risky_chunks = self.retrieval_engine.contextual_retrieval(repo_id, "security", "complex authentication or payment logic without tests", [], n_results=3)
-        except Exception:
-            pass
-        risky_files = list(set([c.get('file_path') for c in risky_chunks if isinstance(c, dict) and c.get('file_path')])) if risky_chunks else (auth_flows[:2] + critical_logic[:1])
+    def generate_qa_intelligence(
+        self,
+        repo_id: str,
+        files_cnt: int,
+        test_files: List[str],
+        all_files: List[str],
+        file_contents: Dict[str, str],
+        tech_stack: Dict[str, Any],
+        coverage: int,
+        llm_override: Dict = None,
+    ) -> Dict[str, Any]:
 
-        # 3. Simulate Enterprise Test Execution (API Tests)
-        api_tests = []
-        for route_file in api_routes[:5]:
-            endpoint_name = os.path.basename(route_file).replace('.py', '').replace('.js', '').replace('.ts', '')
-            api_tests.append({
-                "name": f"API Contract & Payload Validation: {endpoint_name}",
-                "suite": "API Tests",
-                "priority": "P0" if route_file in auth_flows else "P1",
-                "status": self.rng.choice(["passed", "passed", "failed"]) if route_file in risky_files else "passed",
-                "duration": self.rng.randint(50, 800),
-                "env": "Staging",
-                "browser": "API Client",
-                "endpoint": f"/api/v1/{endpoint_name}",
-                "method": self.rng.choice(["GET", "POST", "PUT"]),
-                "error_msg": f"Schema Validation Error: Expected string but got null in {endpoint_name} response" if self.rng.random() > 0.8 else None
-            })
-            
-        # 4. Simulate Enterprise UI / E2E Tests
-        e2e_tests = []
-        for ui_file in ui_components[:5]:
-            comp_name = os.path.basename(ui_file).split('.')[0]
-            e2e_tests.append({
-                "name": f"E2E User Journey: {comp_name} Rendering & Interaction",
-                "suite": "E2E Tests",
-                "priority": "P1",
-                "status": self.rng.choice(["passed", "passed", "flaky", "failed"]),
-                "duration": self.rng.randint(2000, 15000),
-                "env": "QA",
-                "browser": self.rng.choice(["Chrome", "Firefox", "Webkit"]),
-                "error_msg": f"Playwright Timeout: Element [data-testid='{comp_name.lower()}-btn'] not visible after 10000ms" if self.rng.random() > 0.7 else None
-            })
-            
-        # 5. Core Unit/Integration runs based on test files
-        core_tests = []
-        for f in test_files[:10]:
-            core_tests.append({
-                "name": f"Automated Regression: {os.path.basename(f)}",
-                "suite": "Regression" if "regression" in f.lower() else "Unit Tests",
-                "priority": self.rng.choice(["P1", "P2"]),
-                "status": self.rng.choice(["passed", "passed", "passed", "passed", "failed"]),
-                "duration": self.rng.randint(10, 5000),
-                "env": "CI/CD",
-                "browser": "Headless Chrome",
-                "error_msg": "AssertionError: Expected true to be false" if self.rng.random() > 0.8 else None
-            })
+        # ── Real detection ────────────────────────────────────────────────────
+        # 1. Detect test frameworks present
+        test_frameworks = self._detect_test_frameworks(file_contents, tech_stack)
 
-        all_runs = api_tests + e2e_tests + core_tests
-        total_tests = len(all_runs) + self.rng.randint(100, 500) # scale up for realism
-        failed_runs = [t for t in all_runs if t['status'] == 'failed']
-        flaky_runs = [t for t in all_runs if t['status'] == 'flaky']
-        
-        failed_count = len(failed_runs) + self.rng.randint(0, 5)
-        flaky_count = len(flaky_runs) + self.rng.randint(0, 5)
-        passed_count = total_tests - failed_count - flaky_count
+        # 2. Analyze actual test files for patterns
+        test_analysis = self._analyze_test_files(test_files, file_contents, all_files)
 
-        # 6. Release Confidence Gate Logic
-        release_score = 100
-        block_reasons = []
-        if coverage < 50:
-            release_score -= 15
-            block_reasons.append(f"Code coverage ({coverage}%) is below enterprise threshold (70%).")
-        if any(t['priority'] == 'P0' for t in failed_runs):
-            release_score -= 30
-            block_reasons.append("Critical P0 test failures detected in build pipeline.")
-        if flaky_count > (total_tests * 0.05):
-            release_score -= 10
-            block_reasons.append("Test suite instability exceeds 5% threshold.")
-        if not api_routes and not ui_components:
-            release_score -= 10
-            
-        release_score = max(0, release_score - (len(failed_runs) * 2))
-        
-        # 7. Triage Intelligence (AI analysis of failures)
-        for f in failed_runs:
-            f['trace'] = f"Error: {f['error_msg']}\n    at Context.<anonymous> ({f['name'].replace(' ', '_')}.spec.js:42:15)\n    at processImmediate (node:internal/timers:466:21)"
-            f['jira'] = f"QA-{self.rng.randint(1000, 9999)}"
-            f['owner'] = "Frontend Team" if "UI" in f['name'] else "Backend Team"
-            
-            if "Timeout" in (f['error_msg'] or ""):
-                f['ai_hypothesis'] = f"The DOM element failed to render in time. The component {f['name']} might be waiting on a slow API response."
-                f['suggested_fix'] = "await page.waitForResponse(response => response.url().includes('/api') && response.status() === 200);\nawait page.locator('[data-testid=\"btn\"]').click();"
-            elif "Schema" in (f['error_msg'] or ""):
-                f['ai_hypothesis'] = "The API contract was violated. The upstream microservice might have changed its response DTO schema without versioning."
-                f['suggested_fix'] = "interface ExpectedResponse {\n  data: string; // Was previously nullable\n}"
-            else:
-                f['ai_hypothesis'] = "Unexpected state mutation during concurrent test execution."
-                f['suggested_fix'] = "beforeEach(() => { resetDatabaseState(); });"
-
-        # 8. Flaky Intelligence
-        flaky_intelligence = []
-        for flake in flaky_runs:
-            flake_rate_val = self.rng.randint(10, 40)
-            root_cause_val = "Race condition detected between async React rendering and Playwright click event."
-            flaky_intelligence.append({
-                "name": flake['name'],
-                "suite": flake['suite'],
-                "flake_rate": f"{flake_rate_val}%",
-                "root_cause": root_cause_val,
-                "suggested_fix": "await expect(page.locator('.loading-spinner')).toBeHidden();",
-                "history": ["passed", "failed", "passed", "passed", "failed"]
-            })
-            
-            # Persist Flaky Memory to KB
-            self.session.add(QAFlakyMemory(
-                id=uuid.uuid4().hex, repo_id=repo_id, test_name=flake['name'], suite=flake['suite'], 
-                flake_rate=float(flake_rate_val), root_cause=root_cause_val, history=["passed", "failed", "passed", "passed", "failed"]
-            ))
-
-        # Persist Failures to KB
-        for f in failed_runs:
-            self.session.add(QAHistoricalFailures(
-                id=uuid.uuid4().hex, repo_id=repo_id, test_name=f['name'], 
-                error_msg=f['error_msg'], ai_hypothesis=f.get('ai_hypothesis', ''), 
-                suggested_fix=f.get('suggested_fix', ''), timestamp=time.time()
-            ))
-            
-        # Persist Release Score to KB
-        self.session.add(QAReleaseScores(
-            id=uuid.uuid4().hex, repo_id=repo_id, scan_id=uuid.uuid4().hex, 
-            score=release_score, decision="SAFE" if release_score >= 80 else "BLOCK",
-            block_reasons=block_reasons, timestamp=time.time()
-        ))
-        
-        try:
-            self.session.commit()
-        except Exception:
-            pass
-
-
-        # 9. Performance Metrics
-        performance_tests = []
-        performance_insights = []
-        if api_routes:
-            for route in api_routes[:3]:
-                endpoint_name = os.path.basename(route).replace('.py', '').replace('.js', '')
-                performance_tests.append({
-                    "name": f"Load Test: {endpoint_name} Throughput",
-                    "suite": "Performance Tests",
-                    "priority": "P2",
-                    "status": self.rng.choice(["passed", "failed"]),
-                    "duration": self.rng.randint(30000, 60000),
-                    "env": "Performance",
-                    "endpoint": f"/api/{endpoint_name}",
-                    "error_msg": f"p99 latency exceeded 500ms (measured: {self.rng.randint(600, 1200)}ms)" if self.rng.random() > 0.5 else None
-                })
-            performance_insights = [
-                "Auth middleware causing 38% latency increase during high concurrency.",
-                "Database connection pool exhausted during spike tests on /api/checkout.",
-                "Frontend bundle size (4.2MB) is delaying First Contentful Paint."
-            ]
-
-        performance_intelligence = {
-            "p95_latency": f"{self.rng.randint(120, 300)}ms",
-            "p99_latency": f"{self.rng.randint(400, 900)}ms",
-            "throughput": f"{self.rng.randint(1000, 5000)} req/sec",
-            "memory_consumption": f"{self.rng.randint(400, 1200)} MB",
-            "cpu_spikes": f"{self.rng.randint(2, 10)} spikes > 90%",
-            "insights": performance_insights
-        }
-        
-        # 10. Recommendations based on codebase realities
-        recs = []
-        if not test_files:
-            recs.append("Zero automated tests detected. Initiate fundamental unit test coverage for core business logic immediately.")
-        if auth_flows and not any("auth" in f.lower() for f in test_files):
-            recs.append("Critical Authentication modules lack regression tests. Generate Auth smoke tests.")
-        if coverage < 60:
-            recs.append(f"Current codebase coverage is {coverage}%. Target minimum 80% to ensure CI/CD stability.")
-        if flaky_count > 0:
-            recs.append(f"{flaky_count} tests are exhibiting flaky behavior. Assign an SDET to stabilize DOM selectors and network mocks.")
-
+        # 3. Suggest real tests from LLM override if available
+        suggested_tests = []
         if llm_override and "qa_suggestions" in llm_override:
-            qa_sug = llm_override["qa_suggestions"]
-            if "recommendations" in qa_sug:
-                recs.extend(qa_sug["recommendations"])
-            if "test_coverage_estimate" in qa_sug:
-                coverage = qa_sug["test_coverage_estimate"]
-            for idx, st in enumerate(qa_sug.get("suggested_tests", [])):
-                api_tests.append({
-                    "name": f"Suggested: {st.get('test_name')}",
-                    "suite": "AI Recommendations",
-                    "priority": "P1",
-                    "status": "passed",
-                    "duration": 120,
-                    "env": "Staging",
-                    "browser": "API Client",
-                    "endpoint": st.get("file_path", "unknown"),
-                    "method": "GET",
-                    "error_msg": None,
-                    "description": st.get("description", ""),
-                    "mock_code": st.get("mock_code", "")
-                })
-                # Also add as a recommendation text so it's super visible
-                recs.append(f"Add test '{st.get('test_name')}' for {st.get('file_path')}: {st.get('description')}")
+            suggested_tests = llm_override["qa_suggestions"].get("suggested_tests", [])
 
-        all_runs = api_tests + e2e_tests + core_tests
+        # Fill in real suggestions from unteested auth/api files if LLM didn't provide enough
+        if len(suggested_tests) < 3:
+            suggested_tests += self._generate_test_suggestions(all_files, file_contents, tech_stack)
+
+        # 4. Build flaky test memory from DB (real historical data)
+        flaky_tests = self._get_flaky_tests(repo_id)
+
+        # 5. Compute release gate score
+        release_score = self._compute_release_score(coverage, test_analysis, flaky_tests)
+
+        # 6. LLM-provided recommendations
+        llm_recs = []
+        if llm_override and "qa_suggestions" in llm_override:
+            llm_recs = llm_override["qa_suggestions"].get("recommendations", [])
+
+        # 7. Historical failures from DB
+        historical_failures = self._get_historical_failures(repo_id)
 
         return {
             "overview": {
-                "total_tests": total_tests + len(qa_sug.get("suggested_tests", [])) if (llm_override and "qa_suggestions" in llm_override) else total_tests,
-                "passed_tests": passed_count + len(qa_sug.get("suggested_tests", [])) if (llm_override and "qa_suggestions" in llm_override) else passed_count,
-                "failed_tests": failed_count,
-                "flaky_tests": flaky_count,
-                "coverage": f"{coverage}%",
-                "release_score": release_score,
-                "release_decision": "SAFE TO RELEASE" if release_score >= 80 else "REVIEW REQUIRED" if release_score >= 60 else "BLOCK RELEASE",
-                "block_reasons": block_reasons
+                "test_coverage": f"{coverage}%",
+                "total_test_files": len(test_files),
+                "total_source_files": files_cnt,
+                "test_ratio": f"{round(len(test_files) / max(files_cnt, 1) * 100, 1)}%",
+                "frameworks_detected": test_frameworks,
+                "release_score": release_score["score"],
+                "release_decision": release_score["decision"],
             },
-            "test_runs": all_runs + performance_tests,
-            "api_tests": api_tests,
-            "e2e_tests": e2e_tests,
-            "performance_tests": performance_tests,
-            "performance_intelligence": performance_intelligence,
-            "failures": failed_runs + [t for t in performance_tests if t['status'] == 'failed'],
-            "coverage_engine": {
-                "overall": coverage,
-                "ui_flow": self.rng.randint(max(0, coverage-20), min(100, coverage+20)),
-                "api_endpoints": self.rng.randint(max(0, coverage-10), min(100, coverage+10)),
-                "critical_path": self.rng.randint(max(0, coverage-30), min(100, coverage+15)),
-                "untested_features": [os.path.basename(rf) for rf in risky_files[:3]]
-            },
-            "flaky_intelligence": flaky_intelligence,
-            "ci_cd_pipeline": {
-                "system": "GitHub Actions" if "GitHub Actions" in tech_stack.get("DevOps", []) else "GitLab CI",
-                "status": "Success" if release_score > 70 else "Failed",
-                "build": f"#{self.rng.randint(1000, 9999)}",
-                "triggered_by": "Automated Pull Request trigger",
-                "duration": f"{self.rng.randint(2, 15)}m {self.rng.randint(0, 59)}s"
-            },
-            "trends": [{"date": f"Day {i}", "passed": total_tests - self.rng.randint(0, 20), "failed": self.rng.randint(0, 20)} for i in range(1, 8)],
-            "recommendations": recs
+            "test_files": test_analysis["files"][:20],
+            "coverage_gaps": test_analysis["coverage_gaps"][:10],
+            "suggested_tests": suggested_tests[:10],
+            "flaky_tests": flaky_tests[:10],
+            "historical_failures": historical_failures[:10],
+            "release_gate": release_score,
+            "recommendations": llm_recs or self._default_recommendations(coverage, test_frameworks),
+            "health_score": min(100, max(10, coverage + (10 if test_frameworks else 0))),
         }
+
+    # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _detect_test_frameworks(self, file_contents: Dict, tech_stack: Dict) -> List[str]:
+        found = []
+        all_content = " ".join(file_contents.values()).lower()
+        checks = {
+            "pytest": ["import pytest", "from pytest", "def test_"],
+            "unittest": ["import unittest", "unittest.TestCase"],
+            "jest": ["describe(", "it(", "expect(", "jest.fn"],
+            "vitest": ["import { describe", "vi.fn"],
+            "playwright": ["from playwright", "import playwright"],
+            "cypress": ["cy.", "cypress"],
+            "mocha": ["describe(", "it(", "chai"],
+        }
+        for fw, patterns in checks.items():
+            if any(p.lower() in all_content for p in patterns):
+                found.append(fw)
+        return found
+
+    def _analyze_test_files(self, test_files: List[str], file_contents: Dict, all_files: List[str]) -> Dict:
+        analyzed = []
+        for tf in test_files[:20]:
+            content = file_contents.get(tf, "")
+            funcs = re.findall(r"def (test_\w+|it\(|describe\()", content)
+            analyzed.append({
+                "file": tf,
+                "test_count": len(funcs),
+                "test_names": funcs[:5],
+                "lines": len(content.split("\n")),
+            })
+
+        # Coverage gaps = source files without corresponding test files
+        source_names = {f.split("/")[-1].replace(".py", "").replace(".js", "").replace(".ts", "") for f in all_files
+                        if not any(kw in f for kw in ["test", "spec", "__pycache__", ".min."])}
+        tested_names = {f.split("/")[-1].replace("test_", "").replace(".test", "").replace(".spec", "")
+                        .replace(".py", "").replace(".js", "") for f in test_files}
+        gaps = [f for f in all_files if any(n in f for n in source_names - tested_names)
+                and not any(kw in f for kw in ["test", "spec", ".min.", "package"])][:10]
+
+        return {"files": analyzed, "coverage_gaps": gaps}
+
+    def _generate_test_suggestions(self, all_files: List[str], file_contents: Dict, tech_stack: Dict) -> List[Dict]:
+        suggestions = []
+        priority_patterns = ["auth", "login", "api", "router", "controller", "service", "security", "payment"]
+        langs = tech_stack.get("Languages", [])
+        is_python = "Python" in langs or "python" in " ".join(langs).lower()
+
+        for f in all_files[:30]:
+            if any(p in f.lower() for p in priority_patterns) and not any(kw in f.lower() for kw in ["test", "spec"]):
+                content = file_contents.get(f, "")
+                functions = re.findall(r"def (\w+)\(" if is_python else r"function (\w+)\(", content)[:3]
+                for func in functions:
+                    if func.startswith("_"):
+                        continue
+                    test_code = (
+                        f"def test_{func}_happy_path():\n    # Arrange\n    # Act\n    result = {func}()\n    # Assert\n    assert result is not None"
+                        if is_python else
+                        f"test('{func} should work', () => {{\n  const result = {func}();\n  expect(result).toBeDefined();\n}});"
+                    )
+                    suggestions.append({
+                        "test_name": f"test_{func}_happy_path",
+                        "file_path": f,
+                        "description": f"Verify {func}() returns expected output under normal conditions.",
+                        "mock_code": test_code,
+                    })
+                    if len(suggestions) >= 6:
+                        break
+            if len(suggestions) >= 6:
+                break
+        return suggestions
+
+    def _get_flaky_tests(self, repo_id: str) -> List[Dict]:
+        try:
+            from services.kb_service import QAFlakyMemory
+            records = self.session.query(QAFlakyMemory).filter_by(repo_id=repo_id).all()
+            return [{"test_name": r.test_name, "suite": r.suite, "flake_rate": r.flake_rate,
+                     "root_cause": r.root_cause} for r in records]
+        except Exception:
+            return []
+
+    def _get_historical_failures(self, repo_id: str) -> List[Dict]:
+        try:
+            from services.kb_service import QAHistoricalFailures
+            records = (self.session.query(QAHistoricalFailures)
+                       .filter_by(repo_id=repo_id).order_by(QAHistoricalFailures.timestamp.desc()).limit(10).all())
+            return [{"test_name": r.test_name, "error_msg": r.error_msg,
+                     "ai_hypothesis": r.ai_hypothesis, "suggested_fix": r.suggested_fix} for r in records]
+        except Exception:
+            return []
+
+    def _compute_release_score(self, coverage: int, test_analysis: Dict, flaky_tests: List) -> Dict:
+        score = coverage
+        block_reasons = []
+        if coverage < 40:
+            block_reasons.append(f"Test coverage critically low: {coverage}% (threshold: 40%)")
+        if len(flaky_tests) > 3:
+            block_reasons.append(f"{len(flaky_tests)} flaky tests detected — may cause unreliable CI.")
+            score -= 10
+        decision = "PASS" if not block_reasons else "BLOCK"
+        return {"score": max(0, min(100, score)), "decision": decision, "block_reasons": block_reasons}
+
+    def _default_recommendations(self, coverage: int, frameworks: List) -> List[str]:
+        recs = []
+        if coverage < 60:
+            recs.append(f"Increase test coverage from {coverage}% to at least 60% by adding unit tests for uncovered service modules.")
+        if not frameworks:
+            recs.append("No test framework detected. Add pytest (Python) or Jest (JS) to enable automated testing.")
+        recs.append("Add integration tests for all API endpoints to verify end-to-end request/response cycles.")
+        recs.append("Implement a CI pipeline step that blocks merges when test coverage drops below threshold.")
+        return recs
