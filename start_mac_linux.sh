@@ -3,7 +3,7 @@ echo "Starting Autopsy AI..."
 
 # Start backend in background
 cd backend
-uvicorn main:app --reload --port 8000 &
+venv/bin/python -m uvicorn main:app --reload --port 8000 &
 BACKEND_PID=$!
 cd ..
 
