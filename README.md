@@ -155,9 +155,9 @@ Below are the interface panel layouts:
 ![Architecture Graph Placeholder](docs/screenshots/architecture.png)
 *Provides an overview of repository health, parsed stack components, circular dependencies, and general maintainability grades.*
 
-### AI Copilot
+### Digital Twin & AI Copilot
 ![Copilot Chat Placeholder](docs/screenshots/copilot.png)
-*RAG-powered conversational terminal providing contextual answers from parsed file chunks.*
+*Visualizes interactive architectural layers (Frontend, API, Services, Testing, Infrastructure) and features a RAG-powered Copilot Chat for contextual code exploration.*
 
 ---
 
