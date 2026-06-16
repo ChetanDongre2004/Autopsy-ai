@@ -151,9 +151,9 @@ Below are the interface panel layouts:
 ![Security Dashboard Placeholder](docs/screenshots/security.png)
 *Displays OWASP vulnerability classifications, hardcoded credential leaks, and CVE details mapped to specific file ranges.*
 
-### Architecture View
+### Repository Intelligence
 ![Architecture Graph Placeholder](docs/screenshots/architecture.png)
-*Interactive import relationship and dependency mapping visualization.*
+*Provides an overview of repository health, parsed stack components, circular dependencies, and general maintainability grades.*
 
 ### AI Copilot
 ![Copilot Chat Placeholder](docs/screenshots/copilot.png)
