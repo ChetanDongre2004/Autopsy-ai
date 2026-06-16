@@ -144,19 +144,19 @@ graph TD
 Below are the interface panel layouts:
 
 ### Dashboard
-![Dashboard Placeholder](https://raw.githubusercontent.com/ChetanDongre2004/Autopsy-ai/main/docs/screenshots/dashboard.png)
+![Dashboard Placeholder](docs/screenshots/dashboard.png)
 *Provides an overview of repository health, scanned stack modules, circular dependencies, and general maintainability grades.*
 
 ### Security Analysis
-![Security Dashboard Placeholder](https://raw.githubusercontent.com/ChetanDongre2004/Autopsy-ai/main/docs/screenshots/security.png)
+![Security Dashboard Placeholder](docs/screenshots/security.png)
 *Displays OWASP vulnerability classifications, hardcoded credential leaks, and CVE details mapped to specific file ranges.*
 
 ### Architecture View
-![Architecture Graph Placeholder](https://raw.githubusercontent.com/ChetanDongre2004/Autopsy-ai/main/docs/screenshots/architecture.png)
+![Architecture Graph Placeholder](docs/screenshots/architecture.png)
 *Interactive import relationship and dependency mapping visualization.*
 
 ### AI Copilot
-![Copilot Chat Placeholder](https://raw.githubusercontent.com/ChetanDongre2004/Autopsy-ai/main/docs/screenshots/copilot.png)
+![Copilot Chat Placeholder](docs/screenshots/copilot.png)
 *RAG-powered conversational terminal providing contextual answers from parsed file chunks.*
 
 ---
